@@ -22,10 +22,12 @@ logs/
 
 # service state
 .openclaw/
+data/openclaw/
 *.db
 *.sqlite
 *.pid
 *.sock
+*.bak
 
 # dependencies / build
 node_modules/

@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "lastTouchedVersion": "2026.3.23",
+    "lastTouchedAt": "2026-03-24T05:03:03.590Z"
+  },
   "agents": {
     "defaults": {
       "model": {
@@ -18,6 +22,18 @@
     "nativeSkills": "auto",
     "restart": true,
     "ownerDisplay": "raw"
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "allowlist",
+      "botToken": "6742104724:AAHcsvl0OxyIRuWh4COkzAbdEnTNO3czkUE",
+      "allowFrom": [
+        "tg:438879394"
+      ],
+      "groupPolicy": "allowlist",
+      "streaming": "block"
+    }
   },
   "gateway": {
     "port": 18789,
@@ -39,9 +55,5 @@
         }
       }
     }
-  },
-  "meta": {
-    "lastTouchedVersion": "2026.3.23",
-    "lastTouchedAt": "2026-03-24T04:38:57.182Z"
   }
 }
