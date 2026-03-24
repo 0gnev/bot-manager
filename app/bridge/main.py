@@ -16,6 +16,7 @@ import sys
 import uvicorn
 from fastapi import FastAPI
 
+from bridge.api.tutor import router as tutor_router
 from bridge.config import get_settings
 from bridge.webhook.router import router as webhook_router
 
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 def create_app() -> FastAPI:
     app = FastAPI(title="Bot Manager Bridge", docs_url=None, redoc_url=None)
     app.include_router(webhook_router)
+    app.include_router(tutor_router)
 
     @app.get("/health")
     async def health() -> dict:

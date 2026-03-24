@@ -109,7 +109,8 @@ def escalation_notice(
         f"Занятие: {event_title} ({fmt_dt(start_time)})\n"
         f"ID брони: <code>{booking_id}</code>\n\n"
         f"{question}\n\n"
-        "<i>Ответьте на это сообщение, чтобы студент получил ваш ответ.</i>"
+        "<i>Чтобы ответить, отправьте команду:</i>\n"
+        f"<code>/reply {booking_id} Ваш ответ</code>"
     )
 
 
