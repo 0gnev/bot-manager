@@ -17,7 +17,11 @@ from telegram_adapter import templates
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_EVENTS = {"BOOKING_CREATED", "BOOKING_CANCELLED", "BOOKING_RESCHEDULED"}
+SUPPORTED_EVENTS = {
+    "BOOKING_CREATED", "BOOKING_STARTED",
+    "BOOKING_CANCELLED",
+    "BOOKING_RESCHEDULED",
+}
 
 
 async def handle_webhook(body: dict, settings: Settings) -> None:
@@ -37,7 +41,7 @@ async def handle_webhook(body: dict, settings: Settings) -> None:
         return
 
     match payload.event:
-        case "BOOKING_CREATED":
+        case "BOOKING_CREATED" | "BOOKING_STARTED":
             await _on_created(booking_id, payload, settings)
         case "BOOKING_RESCHEDULED":
             await _on_rescheduled(booking_id, payload, settings)
