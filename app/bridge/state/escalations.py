@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _esc_path(state_path: str, booking_id: str) -> Path:
@@ -43,6 +46,7 @@ async def create(
         json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    await _export_to_obsidian(state_path, data)
     return data
 
 
@@ -69,6 +73,7 @@ async def resolve(
         json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    await _export_to_obsidian(state_path, data)
     return data
 
 
@@ -94,3 +99,12 @@ async def find_pending_by_tutor_message(
         return None
 
     return await asyncio.to_thread(_scan)
+
+
+async def _export_to_obsidian(state_path: str, data: dict) -> None:
+    try:
+        from obsidian_adapter.writer import export_escalation
+        knowledge_path = str(Path(state_path).parent / "knowledge")
+        await export_escalation(knowledge_path, data)
+    except Exception as exc:
+        logger.warning("Failed to export escalation to Obsidian: %s", exc)

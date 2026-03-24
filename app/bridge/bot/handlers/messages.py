@@ -16,6 +16,7 @@ from bridge.clients.openclaw import OpenclawClient
 from bridge.config import Settings
 from bridge.escalation.handler import escalate
 from bridge.state import bookings, conversations
+from obsidian_adapter.reader import search as knowledge_search
 from telegram_adapter import templates
 
 logger = logging.getLogger(__name__)
@@ -42,12 +43,14 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
     await conversations.append(settings.state_path, booking_id, "user", text)
 
     history = await conversations.load(settings.state_path, booking_id)
+    knowledge = await knowledge_search(settings.knowledge_path, text, limit=3)
     client = OpenclawClient(settings)
 
     response = await client.chat(
         message=text,
         booking_context=booking,
         history=history[:-1],  # exclude the message we just appended
+        knowledge=knowledge,
     )
 
     action = response.get("action", "answer")
@@ -95,6 +98,7 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
         )
 
     history = await conversations.load(settings.state_path, booking_id)
+    knowledge = await knowledge_search(settings.knowledge_path, caption, limit=3) if caption else []
     client = OpenclawClient(settings)
 
     response = await client.image(
@@ -102,6 +106,7 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
         caption=caption,
         booking_context=booking,
         history=history,
+        knowledge=knowledge,
     )
 
     action = response.get("action", "answer")

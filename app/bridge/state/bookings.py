@@ -2,14 +2,20 @@
 Booking state — persisted as JSON files.
 
 Layout: {state_path}/bookings/{booking_id}.json
+
+On every save, the booking is also exported to Obsidian-compatible markdown
+in the knowledge directory (parallel to state_path).
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _bookings_dir(state_path: str) -> Path:
@@ -22,6 +28,11 @@ def _booking_path(state_path: str, booking_id: str) -> Path:
     return _bookings_dir(state_path) / f"{booking_id}.json"
 
 
+def _knowledge_path(state_path: str) -> str:
+    """Derive knowledge path from state path (sibling directory)."""
+    return str(Path(state_path).parent / "knowledge")
+
+
 async def save(state_path: str, booking_id: str, data: dict) -> None:
     data = {**data, "updated_at": datetime.now(timezone.utc).isoformat()}
     path = _booking_path(state_path, booking_id)
@@ -30,6 +41,12 @@ async def save(state_path: str, booking_id: str, data: dict) -> None:
         json.dumps(data, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
+    # Export to Obsidian
+    try:
+        from obsidian_adapter.writer import export_booking
+        await export_booking(_knowledge_path(state_path), data)
+    except Exception as exc:
+        logger.warning("Failed to export booking to Obsidian: %s", exc)
 
 
 async def load(state_path: str, booking_id: str) -> dict | None:

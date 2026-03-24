@@ -3,14 +3,20 @@ Conversation history — persisted as JSON files.
 
 Layout: {state_path}/conversations/{booking_id}.json
 Each file is a list of message dicts: {role, content, ts}.
+
+On every append, the conversation is also exported to Obsidian-compatible
+markdown in the knowledge directory.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _conv_path(state_path: str, booking_id: str) -> Path:
@@ -48,3 +54,10 @@ async def append(
         json.dumps(history, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    # Export to Obsidian
+    try:
+        from obsidian_adapter.writer import export_conversation
+        knowledge_path = str(Path(state_path).parent / "knowledge")
+        await export_conversation(knowledge_path, booking_id, history)
+    except Exception as exc:
+        logger.warning("Failed to export conversation to Obsidian: %s", exc)
