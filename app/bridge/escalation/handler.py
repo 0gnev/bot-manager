@@ -50,17 +50,14 @@ async def escalate(
         return
 
     booking_id = booking["booking_id"]
-    event_detail = booking.get("event_detail") or {}
     attendee = booking.get("attendee") or {}
 
     notice = templates.escalation_notice(
         student_name=attendee.get("name", "Студент"),
         booking_id=booking_id,
         question=question,
-        event_title=event_detail.get("title", "Занятие"),
-        start_time=_parse_dt(
-            event_detail.get("startTime") or event_detail.get("start_time")
-        ),
+        event_title=booking.get("title", "Занятие"),
+        start_time=_parse_dt(booking.get("start_time")),
     )
 
     sent = await tutor_bot.send_message(tutor_chat_id, notice)

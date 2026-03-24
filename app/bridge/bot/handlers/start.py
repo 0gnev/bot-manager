@@ -49,12 +49,10 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
         settings.state_path, booking_id, message.from_user.id
     )
 
-    # Parse datetimes for the template
-    event_detail = booking.get("event_detail") or {}
     from datetime import datetime
-    start_time = _parse_dt(event_detail.get("startTime") or event_detail.get("start_time"))
-    end_time = _parse_dt(event_detail.get("endTime") or event_detail.get("end_time"))
-    event_title = event_detail.get("title", "Занятие")
+    start_time = _parse_dt(booking.get("start_time"))
+    end_time = _parse_dt(booking.get("end_time"))
+    event_title = booking.get("title", "Занятие")
     meeting_url = booking.get("meeting_url")
 
     attendee = booking.get("attendee") or {}

@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     telegram_mode: str = "polling"
 
     # Planerka
-    planerka_webhook_secret: str
+    planerka_api_key: str        # x-auth for REST API calls
+    planerka_webhook_secret: str # Bearer secret on incoming webhooks
 
     # Openclaw
     gateway_auth_token: str

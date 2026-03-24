@@ -1,18 +1,14 @@
 services:
   openclaw:
-    build:
-      context: .
-      dockerfile: containers/openclaw/Dockerfile
+    image: alpine/openclaw
+    user: root
     env_file:
       - .env
     volumes:
-      - ./config:/workspace/config:ro
-      - ./data/state:/workspace/data/state
-      - ./data/uploads:/workspace/data/uploads
-      - ./data/knowledge:/workspace/data/knowledge
+      - ./config/openclaw.json:/root/.openclaw/openclaw.json:ro
+      - ./data/openclaw:/workspace
     ports:
       - "127.0.0.1:18789:18789"
-      - "127.0.0.1:3000:3000"
     restart: unless-stopped
 
   bridge:
@@ -22,7 +18,9 @@ services:
     env_file:
       - .env
     depends_on:
-      - openclaw
+      openclaw:
+        condition: service_started
+        required: false
     volumes:
       - ./app:/workspace/app
       - ./scripts:/workspace/scripts
@@ -32,4 +30,13 @@ services:
       - ./data/knowledge:/workspace/data/knowledge
     ports:
       - "127.0.0.1:8081:8081"
+    restart: unless-stopped
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --url http://bridge:8081 --no-autoupdate
+    depends_on:
+      - bridge
+    profiles:
+      - tunnel
     restart: unless-stopped

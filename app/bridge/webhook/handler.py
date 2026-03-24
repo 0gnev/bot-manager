@@ -44,20 +44,21 @@ async def _on_created(
     booking_id: str, payload: PlanerkaWebhookPayload, settings: Settings
 ) -> None:
     attendee = payload.get_attendee()
-    event_detail = payload.event_detail
 
     data = {
         "booking_id": booking_id,
         "event": payload.event,
+        "title": payload.title,
+        "description": payload.description,
+        "start_time": payload.start_time.isoformat() if payload.start_time else None,
+        "end_time": payload.end_time.isoformat() if payload.end_time else None,
         "organizer": payload.organizer.model_dump(by_alias=True, mode="json") if payload.organizer else None,
         "attendee": attendee.model_dump(by_alias=True, mode="json") if attendee else None,
-        "event_detail": event_detail.model_dump(by_alias=True, mode="json") if event_detail else None,
-        "location": payload.location,
+        "location": payload.location.model_dump(by_alias=True, mode="json") if payload.location else None,
         "meeting_url": payload.get_meeting_url(),
-        "custom_fields": (
-            [f.model_dump(by_alias=True, mode="json") for f in payload.custom_fields]
-            if payload.custom_fields
-            else []
+        "custom_inputs": (
+            [i.model_dump(by_alias=True, mode="json") for i in payload.custom_inputs]
+            if payload.custom_inputs else []
         ),
         "telegram_user_id": None,
         "status": "active",
@@ -72,14 +73,14 @@ async def _on_rescheduled(
 ) -> None:
     existing = await bookings.load(settings.state_path, booking_id)
     if existing is None:
-        # Treat as a fresh create if we haven't seen this booking
         await _on_created(booking_id, payload, settings)
         return
 
-    event_detail = payload.event_detail
     existing["event"] = payload.event
-    if event_detail:
-        existing["event_detail"] = event_detail.model_dump(by_alias=True, mode="json")
+    if payload.start_time:
+        existing["start_time"] = payload.start_time.isoformat()
+    if payload.end_time:
+        existing["end_time"] = payload.end_time.isoformat()
     if payload.get_meeting_url():
         existing["meeting_url"] = payload.get_meeting_url()
 
