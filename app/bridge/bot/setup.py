@@ -17,19 +17,17 @@ from aiogram.enums import ParseMode
 
 from bridge.bot import registry
 from bridge.bot.middleware import RoleMiddleware
-from bridge.bot.handlers import start, messages, tutor
+from bridge.bot.handlers import start, messages
 from bridge.config import Settings
 
 
-def create_bots_and_dispatcher(settings: Settings) -> tuple[Bot, Bot | None, Dispatcher]:
+def create_bots_and_dispatcher(settings: Settings) -> tuple[Bot, Dispatcher]:
     defaults = DefaultBotProperties(parse_mode=ParseMode.HTML)
     bot_student = Bot(token=settings.telegram_bot_token_default, default=defaults)
 
-    bot_tutor: Bot | None = None
-    if settings.telegram_bot_token_manager:
-        bot_tutor = Bot(token=settings.telegram_bot_token_manager, default=defaults)
-
-    registry.register(bot_student, bot_tutor)
+    # Tutor bot is created lazily by registry on first use (to avoid
+    # conflicting with OpenClaw's polling of the same token).
+    registry.register(bot_student, settings.telegram_bot_token_manager or None)
 
     dp = Dispatcher()
     dp.workflow_data["settings"] = settings
@@ -38,4 +36,4 @@ def create_bots_and_dispatcher(settings: Settings) -> tuple[Bot, Bot | None, Dis
     dp.include_router(start.router)
     dp.include_router(messages.router)
 
-    return bot_student, bot_tutor, dp
+    return bot_student, dp
