@@ -10,8 +10,9 @@ data/state/*
 !data/state/.gitkeep
 data/uploads/*
 !data/uploads/.gitkeep
-data/knowledge/*
-!data/knowledge/.gitkeep
+data/knowledge/bookings/
+data/knowledge/conversations/
+data/knowledge/escalations/
 
 # logs / temp / cache
 *.log
