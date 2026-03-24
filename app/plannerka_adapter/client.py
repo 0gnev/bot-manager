@@ -1,7 +1,7 @@
 """
 Planerka REST API client.
 
-Auth: x-auth header (same token as PLANERKA_WEBHOOK_SECRET).
+Auth: x-auth header (PLANERKA_API_KEY).
 Base URL: PLANERKA_BASE_URL
 
 Endpoints:

@@ -29,7 +29,8 @@ if not os.environ.get("PLANERKA_BASE_URL"):
     load_dotenv(_root / ".env")
 
 BASE_URL = os.environ["PLANERKA_BASE_URL"]
-TOKEN = os.environ["PLANERKA_WEBHOOK_SECRET"]
+API_KEY = os.environ["PLANERKA_API_KEY"]        # x-auth for REST API calls
+WEBHOOK_SECRET = os.environ["PLANERKA_WEBHOOK_SECRET"]  # Bearer on incoming webhooks
 
 
 # ── 1. REST API ───────────────────────────────────────────────────────────────
@@ -37,7 +38,7 @@ TOKEN = os.environ["PLANERKA_WEBHOOK_SECRET"]
 async def test_api() -> None:
     from plannerka_adapter.client import PlanerkaClient
 
-    client = PlanerkaClient(BASE_URL, TOKEN)
+    client = PlanerkaClient(BASE_URL, API_KEY)
     print("\n── REST API ─────────────────────────────")
 
     health = await client.health()

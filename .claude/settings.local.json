@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(grep -v \"=<set>$\\\\|=$\")",
-      "Bash(docker compose:*)"
+      "Bash(docker compose:*)",
+      "WebFetch(domain:docs.openclaw.ai)",
+      "WebFetch(domain:openclaw.ai)"
     ]
   }
 }

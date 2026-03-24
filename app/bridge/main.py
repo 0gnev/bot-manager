@@ -4,6 +4,7 @@ Bridge entrypoint.
 Runs two concurrent tasks in a single process:
   1. FastAPI (uvicorn) — listens for Planerka webhooks on :8081
   2. aiogram polling    — polls Telegram for both student and tutor bots
+                          (only started when both bot tokens are configured)
 """
 
 from __future__ import annotations
@@ -16,7 +17,6 @@ import uvicorn
 from fastapi import FastAPI
 
 from bridge.config import get_settings
-from bridge.bot.setup import create_bots_and_dispatcher
 from bridge.webhook.router import router as webhook_router
 
 logging.basicConfig(
@@ -39,10 +39,15 @@ def create_app() -> FastAPI:
 
 
 async def run_polling(settings) -> None:
+    from bridge.bot.setup import create_bots_and_dispatcher
+
     bot_student, bot_tutor, dp = create_bots_and_dispatcher(settings)
     logger.info("Starting Telegram polling (student + tutor bots)")
     try:
-        await dp.start_polling(bot_student, bot_tutor, allowed_updates=dp.resolve_used_update_types())
+        await dp.start_polling(
+            bot_student, bot_tutor,
+            allowed_updates=dp.resolve_used_update_types(),
+        )
     finally:
         await bot_student.session.close()
         await bot_tutor.session.close()
@@ -61,14 +66,27 @@ async def run_server(app: FastAPI, settings) -> None:
     await server.serve()
 
 
+def _telegram_configured(settings) -> bool:
+    return bool(
+        getattr(settings, "telegram_bot_token_default", None)
+        and getattr(settings, "telegram_bot_token_manager", None)
+    )
+
+
 async def main() -> None:
     settings = get_settings()
     app = create_app()
 
-    await asyncio.gather(
-        run_server(app, settings),
-        run_polling(settings),
-    )
+    tasks = [run_server(app, settings)]
+
+    if _telegram_configured(settings):
+        tasks.append(run_polling(settings))
+    else:
+        logger.warning(
+            "Telegram bot tokens not set — webhook server only, polling disabled"
+        )
+
+    await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":

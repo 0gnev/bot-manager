@@ -10,7 +10,7 @@ class PlanerkaOrganizer(BaseModel):
 
     name: str
     email: str
-    timezone: str | None = None
+    time_zone: str | None = Field(None, alias="timeZone")
 
 
 class PlanerkaAttendee(BaseModel):
@@ -18,64 +18,60 @@ class PlanerkaAttendee(BaseModel):
 
     name: str
     email: str | None = None
-    timezone: str | None = None
     phone: str | None = None
+    telegram: str | None = None
+    time_zone: str | None = Field(None, alias="timeZone")
 
 
-class PlanerkaEventDetail(BaseModel):
+class PlanerkaLocation(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    title: str
-    description: str | None = None
-    type: str | None = None
-    start_time: datetime | None = Field(None, alias="startTime")
-    end_time: datetime | None = Field(None, alias="endTime")
+    name: str | None = None
+    id: str | None = None
+    url: str | None = None
+    password: str | None = None
 
 
-class PlanerkaCustomField(BaseModel):
+class PlanerkaCustomInput(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    label: str
+    label: str | None = None
     value: str | None = None
 
 
 class PlanerkaWebhookPayload(BaseModel):
     """
-    Incoming webhook payload from Planerka.
-    Field names follow Planerka's camelCase convention.
-    Extra fields are preserved for forward compatibility.
+    Planerka webhook payload — based on observed live payload shape.
+
+    All event fields (title, startTime, endTime) are top-level.
+    location is an object with .url for the meeting link.
+    Booking ID comes from the `uid` field.
     """
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
-    event: str  # BOOKING_CREATED | BOOKING_CANCELLED | BOOKING_RESCHEDULED
-    booking_id: str | None = Field(None, alias="bookingId")
+    event: str                  # BOOKING_CREATED | BOOKING_CANCELLED | BOOKING_RESCHEDULED
+    uid: str | None = None
+    title: str | None = None
+    description: str | None = None
+    start_time: datetime | None = Field(None, alias="startTime")
+    end_time: datetime | None = Field(None, alias="endTime")
     organizer: PlanerkaOrganizer | None = None
-    attendee: PlanerkaAttendee | None = None
     attendees: list[PlanerkaAttendee] | None = None
-    event_detail: PlanerkaEventDetail | None = Field(None, alias="eventDetail")
-    location: str | None = None
-    meeting_url: str | None = Field(None, alias="meetingUrl")
-    custom_fields: list[PlanerkaCustomField] | None = Field(None, alias="customFields")
-    timestamp: datetime | None = None
-    meta: dict[str, Any] | None = None
+    location: PlanerkaLocation | None = None
+    event_type: str | None = Field(None, alias="eventType")
+    custom_inputs: list[PlanerkaCustomInput] | None = Field(None, alias="customInputs")
+    utm: dict[str, Any] | None = None
 
     def get_booking_id(self) -> str | None:
-        """Return booking ID from whichever field Planerka uses."""
-        return self.booking_id or (self.meta or {}).get("bookingId")
+        return self.uid
 
     def get_attendee(self) -> PlanerkaAttendee | None:
-        """Return the primary attendee (student)."""
-        if self.attendee:
-            return self.attendee
         if self.attendees:
             return self.attendees[0]
         return None
 
     def get_meeting_url(self) -> str | None:
-        """Return meeting URL from dedicated field or location fallback."""
-        if self.meeting_url:
-            return self.meeting_url
-        if self.location and self.location.startswith("http"):
-            return self.location
+        if self.location and self.location.url:
+            return self.location.url
         return None

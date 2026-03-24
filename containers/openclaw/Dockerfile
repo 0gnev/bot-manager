@@ -1,4 +1,8 @@
-FROM alpine:3.20
-WORKDIR /workspace
-RUN apk add --no-cache bash curl
-CMD ["sh", "-c", "echo openclaw placeholder started; tail -f /dev/null"]
+FROM alpine/openclaw
+
+USER root
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["node", "openclaw.mjs", "gateway", "--allow-unconfigured"]

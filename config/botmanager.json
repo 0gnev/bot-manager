@@ -1,0 +1,14 @@
+{
+  "project": "bot-manager",
+  "telegram": {
+    "mode": "polling"
+  },
+  "roles": {
+    "student": "student-assistant",
+    "tutor": "tutor-admin"
+  },
+  "knowledge": {
+    "provider": "obsidian",
+    "path": "/workspace/data/knowledge"
+  }
+}

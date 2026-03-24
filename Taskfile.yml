@@ -51,6 +51,30 @@ tasks:
     cmds:
       - docker compose --env-file .env ps
 
+  tunnel:
+    desc: Start bridge + cloudflared tunnel (URL printed in logs)
+    cmds:
+      - docker compose --env-file .env --profile tunnel up -d --build bridge tunnel
+      - echo ""
+      - echo "Waiting for tunnel URL..."
+      - sleep 4
+      - docker compose --env-file .env logs tunnel 2>&1 | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -1 | xargs -I{} echo "Tunnel URL: {}/webhook/planerka"
+
+  tunnel-url:
+    desc: Print current tunnel URL
+    cmds:
+      - docker compose --env-file .env logs tunnel 2>&1 | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -1 | xargs -I{} echo "Tunnel URL: {}/webhook/planerka"
+
+  tunnel-logs:
+    desc: Follow tunnel + bridge logs
+    cmds:
+      - docker compose --env-file .env --profile tunnel logs -f --tail=50 bridge tunnel
+
+  tunnel-down:
+    desc: Stop tunnel and bridge
+    cmds:
+      - docker compose --env-file .env --profile tunnel down bridge tunnel
+
   test-planerka:
     desc: Run Planerka integration test inside bridge container
     cmds:
