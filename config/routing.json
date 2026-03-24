@@ -1,0 +1,12 @@
+{
+  "routes": [
+    {
+      "accountId": "default",
+      "role": "student"
+    },
+    {
+      "accountId": "manager",
+      "role": "tutor"
+    }
+  ]
+}

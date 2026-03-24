@@ -1,0 +1,38 @@
+# secrets
+.env.local
+.env.*
+!.env.example
+!.env.*.example
+
+# runtime data
+data/state/*
+!data/state/.gitkeep
+data/uploads/*
+!data/uploads/.gitkeep
+data/knowledge/*
+!data/knowledge/.gitkeep
+
+# logs / temp / cache
+*.log
+.cache/
+tmp/
+run/
+logs/
+
+# service state
+.openclaw/
+*.db
+*.sqlite
+*.pid
+*.sock
+
+# dependencies / build
+node_modules/
+dist/
+build/
+__pycache__/
+
+# editors / OS
+.DS_Store
+.vscode/
+.idea/
