@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: containers/openclaw/Dockerfile
     env_file:
-      - .env.local
+      - .env
     volumes:
       - ./config:/workspace/config:ro
       - ./data/state:/workspace/data/state
@@ -20,11 +20,12 @@ services:
       context: .
       dockerfile: containers/bridge/Dockerfile
     env_file:
-      - .env.local
+      - .env
     depends_on:
       - openclaw
     volumes:
       - ./app:/workspace/app
+      - ./scripts:/workspace/scripts
       - ./config:/workspace/config:ro
       - ./data/state:/workspace/data/state
       - ./data/uploads:/workspace/data/uploads

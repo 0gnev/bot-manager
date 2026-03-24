@@ -11,11 +11,11 @@ touch data/state/.gitkeep
 touch data/uploads/.gitkeep
 touch data/knowledge/.gitkeep
 
-if [[ ! -f .env.local ]]; then
-  cp .env.example .env.local
-  echo "Created .env.local from .env.example"
+if [[ ! -f .env ]]; then
+  cp .env.example .env
+  echo "Created .env from .env.example"
 else
-  echo ".env.local already exists"
+  echo ".env already exists"
 fi
 
 if [[ ! -f config/openclaw.json ]]; then

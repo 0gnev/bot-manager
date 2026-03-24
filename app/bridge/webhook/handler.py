@@ -49,13 +49,13 @@ async def _on_created(
     data = {
         "booking_id": booking_id,
         "event": payload.event,
-        "organizer": payload.organizer.model_dump() if payload.organizer else None,
-        "attendee": attendee.model_dump() if attendee else None,
-        "event_detail": event_detail.model_dump() if event_detail else None,
+        "organizer": payload.organizer.model_dump(by_alias=True, mode="json") if payload.organizer else None,
+        "attendee": attendee.model_dump(by_alias=True, mode="json") if attendee else None,
+        "event_detail": event_detail.model_dump(by_alias=True, mode="json") if event_detail else None,
         "location": payload.location,
         "meeting_url": payload.get_meeting_url(),
         "custom_fields": (
-            [f.model_dump() for f in payload.custom_fields]
+            [f.model_dump(by_alias=True, mode="json") for f in payload.custom_fields]
             if payload.custom_fields
             else []
         ),
@@ -79,7 +79,7 @@ async def _on_rescheduled(
     event_detail = payload.event_detail
     existing["event"] = payload.event
     if event_detail:
-        existing["event_detail"] = event_detail.model_dump()
+        existing["event_detail"] = event_detail.model_dump(by_alias=True, mode="json")
     if payload.get_meeting_url():
         existing["meeting_url"] = payload.get_meeting_url()
 

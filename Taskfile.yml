@@ -1,7 +1,7 @@
 version: '3'
 
 dotenv:
-  - .env.local
+  - .env
 
 tasks:
   bootstrap:
@@ -23,36 +23,41 @@ tasks:
   build:
     desc: Build containers
     cmds:
-      - docker compose --env-file .env.local build
+      - docker compose --env-file .env build
 
   up:
     desc: Start local stack
     cmds:
-      - docker compose --env-file .env.local up -d --build
+      - docker compose --env-file .env up -d --build
 
   down:
     desc: Stop local stack
     cmds:
-      - docker compose --env-file .env.local down
+      - docker compose --env-file .env down
 
   restart:
     desc: Restart local stack
     cmds:
-      - docker compose --env-file .env.local down
-      - docker compose --env-file .env.local up -d --build
+      - docker compose --env-file .env down
+      - docker compose --env-file .env up -d --build
 
   logs:
     desc: Follow logs
     cmds:
-      - docker compose --env-file .env.local logs -f --tail=200
+      - docker compose --env-file .env logs -f --tail=200
 
   ps:
     desc: Show container status
     cmds:
-      - docker compose --env-file .env.local ps
+      - docker compose --env-file .env ps
+
+  test-planerka:
+    desc: Run Planerka integration test inside bridge container
+    cmds:
+      - docker compose --env-file .env run --rm --no-deps bridge python /workspace/scripts/test-planerka.py
 
   clean:
     desc: Remove recreatable local runtime data
     cmds:
-      - docker compose --env-file .env.local down -v || true
+      - docker compose --env-file .env down -v || true
       - bash scripts/clean-local.sh
