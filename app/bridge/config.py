@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env.local",
+        env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token_default: str
     telegram_bot_token_manager: str
-    telegram_mode: str = "polling"
+    telegram_mode: str = "polling"  # polling | webhook (webhook for production)
 
     # Planerka
     planerka_api_key: str        # x-auth for REST API calls

@@ -9,6 +9,12 @@ services:
       - ./data/openclaw:/workspace
     ports:
       - "127.0.0.1:18789:18789"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:18789/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
 
   bridge:
@@ -19,17 +25,23 @@ services:
       - .env
     depends_on:
       openclaw:
-        condition: service_started
+        condition: service_healthy
         required: false
     volumes:
-      - ./app:/workspace/app
-      - ./scripts:/workspace/scripts
+      - ./app:/workspace/app:ro
+      - ./scripts:/workspace/scripts:ro
       - ./config:/workspace/config:ro
       - ./data/state:/workspace/data/state
       - ./data/uploads:/workspace/data/uploads
-      - ./data/knowledge:/workspace/data/knowledge
+      - ./data/knowledge:/workspace/data/knowledge:ro
     ports:
       - "127.0.0.1:8081:8081"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
   tunnel:
