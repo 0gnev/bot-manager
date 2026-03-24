@@ -68,3 +68,28 @@ async def find_by_telegram_user(
         return None
 
     return await asyncio.to_thread(_scan)
+
+
+async def find_by_telegram_username(
+    state_path: str, username: str
+) -> dict | None:
+    """Find an active, unlinked booking where attendee.telegram matches @username."""
+    normalized = username.lower().lstrip("@")
+
+    def _scan() -> dict | None:
+        for path in _bookings_dir(state_path).glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if data.get("status") != "active":
+                    continue
+                if data.get("telegram_user_id") is not None:
+                    continue
+                attendee = data.get("attendee") or {}
+                tg = (attendee.get("telegram") or "").lower().lstrip("@")
+                if tg and tg == normalized:
+                    return data
+            except Exception:
+                continue
+        return None
+
+    return await asyncio.to_thread(_scan)
