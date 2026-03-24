@@ -43,7 +43,7 @@ def create_app() -> FastAPI:
 async def run_polling(settings) -> None:
     from bridge.bot.setup import create_bots_and_dispatcher
 
-    bot_student, bot_tutor, dp = create_bots_and_dispatcher(settings)
+    bot_student, dp = create_bots_and_dispatcher(settings)
     logger.info("Starting Telegram polling (student bot only; tutor bot managed by OpenClaw)")
     try:
         await dp.start_polling(
@@ -52,8 +52,6 @@ async def run_polling(settings) -> None:
         )
     finally:
         await bot_student.session.close()
-        if bot_tutor:
-            await bot_tutor.session.close()
 
 
 async def run_server(app: FastAPI, settings) -> None:
