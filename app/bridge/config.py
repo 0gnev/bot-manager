@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     # Telegram
     telegram_bot_token_default: str
-    telegram_bot_token_manager: str
+    telegram_bot_token_manager: str = ""  # used for sending escalations only; OpenClaw polls this bot
     telegram_mode: str = "polling"  # polling | webhook (webhook for production)
 
     # Planerka
