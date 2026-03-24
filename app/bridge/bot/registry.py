@@ -11,7 +11,7 @@ _student_bot: Bot | None = None
 _tutor_bot: Bot | None = None
 
 
-def register(student_bot: Bot, tutor_bot: Bot) -> None:
+def register(student_bot: Bot, tutor_bot: Bot | None) -> None:
     global _student_bot, _tutor_bot
     _student_bot = student_bot
     _tutor_bot = tutor_bot

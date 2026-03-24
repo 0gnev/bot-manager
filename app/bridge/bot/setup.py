@@ -21,10 +21,13 @@ from bridge.bot.handlers import start, messages, tutor
 from bridge.config import Settings
 
 
-def create_bots_and_dispatcher(settings: Settings) -> tuple[Bot, Bot, Dispatcher]:
+def create_bots_and_dispatcher(settings: Settings) -> tuple[Bot, Bot | None, Dispatcher]:
     defaults = DefaultBotProperties(parse_mode=ParseMode.HTML)
     bot_student = Bot(token=settings.telegram_bot_token_default, default=defaults)
-    bot_tutor = Bot(token=settings.telegram_bot_token_manager, default=defaults)
+
+    bot_tutor: Bot | None = None
+    if settings.telegram_bot_token_manager:
+        bot_tutor = Bot(token=settings.telegram_bot_token_manager, default=defaults)
 
     registry.register(bot_student, bot_tutor)
 
@@ -34,6 +37,5 @@ def create_bots_and_dispatcher(settings: Settings) -> tuple[Bot, Bot, Dispatcher
 
     dp.include_router(start.router)
     dp.include_router(messages.router)
-    dp.include_router(tutor.router)
 
     return bot_student, bot_tutor, dp
