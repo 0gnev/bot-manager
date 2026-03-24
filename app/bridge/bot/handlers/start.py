@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 
 from aiogram import Router
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import CommandStart
 from aiogram.types import Message
 
 from bridge.config import Settings
@@ -26,20 +26,36 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
 
     args = message.text.split(maxsplit=1)[1] if " " in (message.text or "") else ""
 
-    if not args:
-        await message.answer(
-            "Привет! Перейдите по ссылке из подтверждения бронирования, "
-            "чтобы я мог найти вашу запись."
-        )
-        return
+    booking: dict | None = None
 
-    booking_id = parse_start_payload(args)
-    booking = await bookings.load(settings.state_path, booking_id)
+    if args:
+        # Deeplink with booking ID
+        booking_id = parse_start_payload(args)
+        booking = await bookings.load(settings.state_path, booking_id)
+        if booking is None:
+            logger.warning("Unknown booking_id from deeplink: %s", booking_id)
+            await message.answer(templates.booking_not_found())
+            return
+    else:
+        # No deeplink — try matching by Telegram username
+        username = message.from_user.username
+        if username:
+            booking = await bookings.find_by_telegram_username(
+                settings.state_path, username
+            )
+        if booking is None:
+            # Also check if already linked by user ID
+            booking = await bookings.find_by_telegram_user(
+                settings.state_path, message.from_user.id
+            )
+        if booking is None:
+            await message.answer(
+                "Привет! Не нашёл вашу запись. "
+                "Убедитесь, что при бронировании указан ваш Telegram."
+            )
+            return
 
-    if booking is None:
-        logger.warning("Unknown booking_id from deeplink: %s", booking_id)
-        await message.answer(templates.booking_not_found())
-        return
+    booking_id = booking["booking_id"]
 
     if booking.get("telegram_user_id") == message.from_user.id:
         await message.answer(templates.already_linked())
@@ -49,7 +65,6 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
         settings.state_path, booking_id, message.from_user.id
     )
 
-    from datetime import datetime
     start_time = _parse_dt(booking.get("start_time"))
     end_time = _parse_dt(booking.get("end_time"))
     event_title = booking.get("title", "Занятие")

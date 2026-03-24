@@ -1,14 +1,19 @@
 """
 Business logic for Planerka webhook events.
+
+Saves booking state and notifies linked students on changes.
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from plannerka_adapter.models import PlanerkaWebhookPayload
+from bridge.bot import registry
 from bridge.config import Settings
 from bridge.state import bookings
+from telegram_adapter import templates
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +92,13 @@ async def _on_rescheduled(
     await bookings.save(settings.state_path, booking_id, existing)
     logger.info("Booking rescheduled: %s", booking_id)
 
+    await _notify_student(existing, templates.booking_rescheduled(
+        event_title=existing.get("title", "Занятие"),
+        start_time=_parse_dt(existing.get("start_time")),
+        end_time=_parse_dt(existing.get("end_time")),
+        meeting_url=existing.get("meeting_url"),
+    ))
+
 
 async def _on_cancelled(
     booking_id: str, payload: PlanerkaWebhookPayload, settings: Settings
@@ -100,3 +112,34 @@ async def _on_cancelled(
     existing["status"] = "cancelled"
     await bookings.save(settings.state_path, booking_id, existing)
     logger.info("Booking cancelled: %s", booking_id)
+
+    await _notify_student(existing, templates.booking_cancelled(
+        event_title=existing.get("title", "Занятие"),
+    ))
+
+
+async def _notify_student(booking: dict, text: str) -> None:
+    """Send a message to the student if they're linked to this booking."""
+    telegram_user_id = booking.get("telegram_user_id")
+    if not telegram_user_id:
+        return
+
+    bot = registry.get_student()
+    if bot is None:
+        logger.warning("Student bot not available for notification")
+        return
+
+    try:
+        await bot.send_message(telegram_user_id, text)
+        logger.info("Student notified: user_id=%s booking=%s", telegram_user_id, booking.get("booking_id"))
+    except Exception as exc:
+        logger.error("Failed to notify student %s: %s", telegram_user_id, exc)
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None

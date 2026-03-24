@@ -66,6 +66,30 @@ def escalated_to_tutor() -> str:
     )
 
 
+def booking_rescheduled(
+    event_title: str,
+    start_time: datetime | None,
+    end_time: datetime | None,
+    meeting_url: str | None,
+) -> str:
+    lines = [
+        "⏰ <b>Время занятия изменилось</b>\n",
+        f"<b>{event_title}</b>",
+        f"Новое время: {fmt_dt(start_time)} — {fmt_dt(end_time)}",
+    ]
+    if meeting_url:
+        lines.append(f'Ссылка: <a href="{meeting_url}">Подключиться</a>')
+    return "\n".join(lines)
+
+
+def booking_cancelled(event_title: str) -> str:
+    return (
+        f"❌ <b>Занятие отменено</b>\n\n"
+        f"Занятие «{event_title}» было отменено. "
+        "Если у вас есть вопросы — напишите преподавателю."
+    )
+
+
 def image_received() -> str:
     return "Изображение получено, обрабатываю…"
 
