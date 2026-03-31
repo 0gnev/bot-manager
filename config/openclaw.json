@@ -1,26 +1,53 @@
 {
-  "channels": {
-    "telegram": {
-      "enabled": true,
-      "botToken": "${TELEGRAM_BOT_TOKEN_MANAGER}",
-      "dmPolicy": "allowlist",
-      "allowFrom": ["tg:${TUTOR_CHAT_ID}"],
-      "streaming": "block"
-    }
-  },
   "agents": {
     "defaults": {
       "model": {
         "primary": "openai/gpt-5-mini"
+      },
+      "compaction": {
+        "mode": "safeguard"
+      },
+      "maxConcurrent": 4,
+      "subagents": {
+        "maxConcurrent": 8
       }
     }
   },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto",
+    "restart": true,
+    "ownerDisplay": "raw"
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "allowlist",
+      "botToken": "${TELEGRAM_BOT_TOKEN_MANAGER}",
+      "allowFrom": ["tg:${TUTOR_CHAT_ID}"],
+      "groupPolicy": "allowlist",
+      "streaming": "block"
+    }
+  },
   "gateway": {
-    "bind": "lan",
     "port": 18789,
+    "bind": "lan",
+    "controlUi": {
+      "allowedOrigins": [
+        "http://localhost:18789",
+        "http://127.0.0.1:18789"
+      ]
+    },
     "auth": {
       "mode": "token",
       "token": "${GATEWAY_AUTH_TOKEN}"
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": {
+          "enabled": true
+        }
+      }
     }
   }
 }
