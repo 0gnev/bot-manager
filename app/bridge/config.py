@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     openclaw_base_url: str = "http://openclaw:18789"
 
     # Tutor
-    tutor_chat_id: int  # required — also used by OpenClaw's allowFrom; must be set in .env
+    tutor_chat_id: int | None = None
 
     # Runtime paths
     state_path: str = "/workspace/data/state"
