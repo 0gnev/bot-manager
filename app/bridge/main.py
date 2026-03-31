@@ -68,7 +68,7 @@ async def run_server(app: FastAPI, settings) -> None:
 
 
 def _telegram_configured(settings) -> bool:
-    return bool(getattr(settings, "telegram_bot_token_default", None))
+    return bool(getattr(settings, "telegram_bot_token_student", None))
 
 
 async def main() -> None:

@@ -1,11 +1,23 @@
 {
   "project": "bot-manager",
   "telegram": {
-    "mode": "polling"
+    "mode": "polling",
+    "bots": {
+      "student": {
+        "env": "TELEGRAM_BOT_TOKEN_STUDENT",
+        "access": "open",
+        "purpose": "Student-facing bot, polled by Bridge"
+      },
+      "owner": {
+        "env": "TELEGRAM_BOT_TOKEN_OWNER",
+        "access": "whitelist",
+        "purpose": "Tutor/owner bot, polled by OpenClaw, Bridge sends escalations"
+      }
+    }
   },
   "roles": {
     "student": "student-assistant",
-    "tutor": "tutor-admin"
+    "owner": "tutor-admin"
   },
   "knowledge": {
     "provider": "obsidian",

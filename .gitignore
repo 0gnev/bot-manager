@@ -1,11 +1,17 @@
-# secrets
+# ── secrets ───────────────────────────────────────────────────────────────────
+.env
 .env.local
 .env.*
-.env
 !.env.example
 !.env.*.example
+*.pem
+*.key
+*.crt
+credentials.json
+secrets.json
+token.json
 
-# runtime data
+# ── runtime data (generated, per-session) ─────────────────────────────────────
 data/state/*
 !data/state/.gitkeep
 data/uploads/*
@@ -14,29 +20,56 @@ data/knowledge/bookings/
 data/knowledge/conversations/
 data/knowledge/escalations/
 
-# logs / temp / cache
+# ── logs / temp / cache ───────────────────────────────────────────────────────
 *.log
 .cache/
 tmp/
 run/
 logs/
 
-# service state
+# ── service state / openclaw workspace ────────────────────────────────────────
 .openclaw/
 data/openclaw/
 *.db
 *.sqlite
+*.sqlite3
 *.pid
 *.sock
 *.bak
 
-# dependencies / build
+# ── python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.eggs/
+*.whl
+.venv/
+venv/
+env/
+.python-version
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+pip-log.txt
+
+# ── docker ────────────────────────────────────────────────────────────────────
+.docker/
+
+# ── node (openclaw workspace) ─────────────────────────────────────────────────
 node_modules/
 dist/
 build/
-__pycache__/
 
-# editors / OS
+# ── editors / OS ──────────────────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
