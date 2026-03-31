@@ -1,4 +1,13 @@
 {
+  "$comment": [
+    "OpenClaw AI gateway configuration.",
+    "",
+    "TELEGRAM_BOT_TOKEN_OWNER — tutor/owner bot; only whitelisted users (TUTOR_CHAT_ID) can interact.",
+    "This token is used by OpenClaw for its Telegram channel AND by Bridge for sending escalation notices.",
+    "",
+    "The student-facing bot (TELEGRAM_BOT_TOKEN_STUDENT) is NOT configured here —",
+    "it is polled directly by Bridge and is open to all users."
+  ],
   "agents": {
     "defaults": {
       "model": {
@@ -23,7 +32,7 @@
     "telegram": {
       "enabled": true,
       "dmPolicy": "allowlist",
-      "botToken": "${TELEGRAM_BOT_TOKEN_MANAGER}",
+      "botToken": "${TELEGRAM_BOT_TOKEN_OWNER}",
       "allowFrom": ["tg:${TUTOR_CHAT_ID}"],
       "groupPolicy": "allowlist",
       "streaming": "block"
@@ -35,7 +44,9 @@
     "controlUi": {
       "allowedOrigins": [
         "http://localhost:18789",
-        "http://127.0.0.1:18789"
+        "http://127.0.0.1:18789",
+        "http://127.0.0.1:3000",
+        "http://localhost:3000"
       ]
     },
     "auth": {

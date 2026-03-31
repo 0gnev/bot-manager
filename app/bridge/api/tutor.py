@@ -6,7 +6,7 @@ Endpoints:
   GET  /api/tutor/escalations    — list pending escalations
   GET  /api/tutor/escalations/{booking_id} — get escalation details
 
-Auth: Bearer token (gateway_auth_token from settings).
+Auth: Bearer token (tutor_api_token; falls back to gateway_auth_token).
 """
 
 from __future__ import annotations
@@ -32,7 +32,9 @@ def _verify_token(
     authorization: str | None = Header(default=None),
     settings: Settings = Depends(get_settings),
 ) -> None:
-    expected = f"Bearer {settings.gateway_auth_token}"
+    # Prefer dedicated tutor API token; fall back to gateway token for backwards compat
+    expected_token = settings.tutor_api_token or settings.gateway_auth_token
+    expected = f"Bearer {expected_token}"
     if not authorization or authorization != expected:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -102,11 +104,11 @@ async def tutor_reply(
     await escalations.resolve(settings.state_path, body.booking_id, body.text)
 
     # Notify tutor in Telegram that reply was delivered
-    tutor_bot = registry.get_tutor()
+    owner_bot = registry.get_owner()
     tutor_chat_id = getattr(settings, "tutor_chat_id", None)
-    if tutor_bot and tutor_chat_id and student_notified:
+    if owner_bot and tutor_chat_id and student_notified:
         try:
-            await tutor_bot.send_message(
+            await owner_bot.send_message(
                 int(tutor_chat_id),
                 f"✅ Ответ отправлен студенту (бронь: {body.booking_id})",
             )

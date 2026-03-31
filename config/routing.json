@@ -1,12 +1,16 @@
 {
   "routes": [
     {
-      "accountId": "default",
-      "role": "student"
+      "accountId": "student",
+      "tokenEnv": "TELEGRAM_BOT_TOKEN_STUDENT",
+      "role": "student",
+      "access": "open"
     },
     {
-      "accountId": "manager",
-      "role": "tutor"
+      "accountId": "owner",
+      "tokenEnv": "TELEGRAM_BOT_TOKEN_OWNER",
+      "role": "owner",
+      "access": "whitelist"
     }
   ]
 }

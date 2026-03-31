@@ -44,9 +44,9 @@ async def escalate(
         )
         return
 
-    tutor_bot = registry.get_tutor()
-    if tutor_bot is None:
-        logger.error("Tutor bot not initialised")
+    owner_bot = registry.get_owner()
+    if owner_bot is None:
+        logger.error("Owner bot not initialised")
         return
 
     booking_id = booking["booking_id"]
@@ -60,12 +60,12 @@ async def escalate(
         start_time=_parse_dt(booking.get("start_time")),
     )
 
-    sent = await tutor_bot.send_message(tutor_chat_id, notice)
+    sent = await owner_bot.send_message(tutor_chat_id, notice)
 
     if image_path:
         try:
             with open(image_path, "rb") as f:
-                await tutor_bot.send_photo(
+                await owner_bot.send_photo(
                     tutor_chat_id, f, reply_to_message_id=sent.message_id
                 )
         except Exception as exc:

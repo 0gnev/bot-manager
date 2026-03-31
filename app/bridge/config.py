@@ -13,28 +13,32 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Telegram
-    telegram_bot_token_default: str
-    telegram_bot_token_manager: str = ""  # used for sending escalations only; OpenClaw polls this bot
+    # ── Telegram ──────────────────────────────────────────────────────────────
+    # Student bot — open to all users, polled by Bridge
+    telegram_bot_token_student: str
+    # Owner bot — restricted to whitelist (TUTOR_CHAT_ID only).
+    # Polled by OpenClaw; Bridge uses it only for sending escalation notices.
+    telegram_bot_token_owner: str = ""
     telegram_mode: str = "polling"  # polling | webhook (webhook for production)
 
-    # Planerka
+    # ── Planerka ──────────────────────────────────────────────────────────────
     planerka_api_key: str        # x-auth for REST API calls
     planerka_webhook_secret: str # Bearer secret on incoming webhooks
 
-    # Openclaw
-    gateway_auth_token: str
+    # ── OpenClaw ──────────────────────────────────────────────────────────────
+    gateway_auth_token: str      # OpenClaw gateway HTTP API
     openclaw_base_url: str = "http://openclaw:18789"
 
-    # Tutor
+    # ── Tutor API ─────────────────────────────────────────────────────────────
+    tutor_api_token: str = ""    # Separate auth for /api/tutor/* endpoints
     tutor_chat_id: int | None = None
 
-    # Runtime paths
+    # ── Runtime paths ─────────────────────────────────────────────────────────
     state_path: str = "/workspace/data/state"
     uploads_path: str = "/workspace/data/uploads"
     knowledge_path: str = "/workspace/data/knowledge"
 
-    # Server
+    # ── Server ────────────────────────────────────────────────────────────────
     host: str = "0.0.0.0"
     port: int = 8081
 
