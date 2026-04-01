@@ -19,6 +19,8 @@ data/uploads/*
 data/knowledge/bookings/
 data/knowledge/conversations/
 data/knowledge/escalations/
+data/audit/*
+!data/audit/.gitkeep
 
 # ── logs / temp / cache ───────────────────────────────────────────────────────
 *.log
@@ -70,6 +72,7 @@ build/
 Thumbs.db
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~
