@@ -12,4 +12,6 @@ task up
 
 - `.env.local` is not committed
 - runtime state lives in `data/`
+- Bridge writes runtime knowledge exports to `data/knowledge/`
+- Bridge writes audit logs to `data/audit/`
 - config templates live in `config/`

@@ -6,10 +6,12 @@ mkdir -p \
   data/state/conversations \
   data/state/escalations \
   data/uploads \
-  data/knowledge
+  data/knowledge \
+  data/audit
 touch data/state/.gitkeep
 touch data/uploads/.gitkeep
 touch data/knowledge/.gitkeep
+touch data/audit/.gitkeep
 
 if [[ ! -f .env ]]; then
   cp .env.example .env
