@@ -18,7 +18,7 @@ from aiogram.types import Message
 from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.config import Settings
-from bridge.state import escalations
+from bridge.state import conversations, escalations
 from telegram_adapter import templates
 
 logger = logging.getLogger(__name__)
@@ -77,6 +77,17 @@ async def escalate(
         booking_id,
         question=question,
         tutor_message_id=sent.message_id,
+        reason="human_review_required",
+    )
+    await conversations.update_metadata(
+        settings.state_path,
+        booking_id,
+        escalation_state="pending",
+        escalation_reason="human_review_required",
+        current_stage="awaiting_tutor_reply",
+        status="escalated",
+        assigned_human=str(tutor_chat_id),
+        automation_enabled=False,
     )
 
     await message.answer(templates.escalated_to_tutor())

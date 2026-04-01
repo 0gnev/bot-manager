@@ -30,13 +30,16 @@ async def create(
     booking_id: str,
     question: str,
     tutor_message_id: int | None = None,
+    reason: str | None = None,
 ) -> dict:
     data = {
         "booking_id": booking_id,
         "status": "pending",
+        "reason": reason,
         "question": question,
         "tutor_message_id": tutor_message_id,
         "tutor_reply": None,
+        "resolved_by": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "resolved_at": None,
     }
@@ -59,13 +62,14 @@ async def load(state_path: str, booking_id: str) -> dict | None:
 
 
 async def resolve(
-    state_path: str, booking_id: str, tutor_reply: str
+    state_path: str, booking_id: str, tutor_reply: str, resolved_by: str | None = None
 ) -> dict | None:
     data = await load(state_path, booking_id)
     if data is None:
         return None
     data["status"] = "resolved"
     data["tutor_reply"] = tutor_reply
+    data["resolved_by"] = resolved_by
     data["resolved_at"] = datetime.now(timezone.utc).isoformat()
     path = _esc_path(state_path, booking_id)
     await asyncio.to_thread(

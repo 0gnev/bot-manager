@@ -116,7 +116,22 @@ async def tutor_reply(
     else:
         logger.warning("Student not linked for booking %s", body.booking_id)
 
-    await escalations.resolve(settings.state_path, body.booking_id, body.text)
+    await escalations.resolve(
+        settings.state_path,
+        body.booking_id,
+        body.text,
+        resolved_by="tutor",
+    )
+    await conversations.update_metadata(
+        settings.state_path,
+        body.booking_id,
+        escalation_state="resolved",
+        escalation_reason=None,
+        current_stage="tutor_reply_sent",
+        status="active",
+        assigned_human="tutor",
+        automation_enabled=False,
+    )
     await audit_log(
         "escalation", "resolved",
         booking_id=body.booking_id,
@@ -212,6 +227,9 @@ async def set_chat_mode(
     chat.mode = body.mode
     if body.mode != OperatingMode.SEMI_AUTO:
         chat.draft = None
+    chat.automation_enabled = body.mode != OperatingMode.MANUAL
+    chat.status = "manual_takeover" if body.mode == OperatingMode.MANUAL else "active"
+    chat.current_stage = "mode_changed"
     await conversations.save_chat(settings.state_path, chat)
 
     await audit_log(
