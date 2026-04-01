@@ -33,7 +33,8 @@ services:
       - ./config:/workspace/config:ro
       - ./data/state:/workspace/data/state
       - ./data/uploads:/workspace/data/uploads
-      - ./data/knowledge:/workspace/data/knowledge:ro
+      - ./data/knowledge:/workspace/data/knowledge
+      - ./data/audit:/workspace/data/audit
     ports:
       - "127.0.0.1:8081:8081"
     healthcheck:
