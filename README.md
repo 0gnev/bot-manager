@@ -15,3 +15,4 @@ task up
 - Bridge writes runtime knowledge exports to `data/knowledge/`
 - Bridge writes audit logs to `data/audit/`
 - config templates live in `config/`
+- GitHub Actions CI/CD setup is documented in `docs/github-actions.md`
