@@ -20,7 +20,7 @@ from bridge.config import Settings
 from bridge.delivery import send_student_message
 from bridge.escalation.handler import escalate
 from bridge.policies import evaluate_ai_response
-from bridge.state import bookings, conversations, OperatingMode
+from bridge.state import bookings, conversations, load_controls, OperatingMode
 from obsidian_adapter.reader import search as knowledge_search
 from telegram_adapter import templates
 
@@ -178,6 +178,8 @@ async def _handle_manual(
     settings: Settings,
     booking_id: str,
     student_text: str,
+    *,
+    context_label: str = "manual",
 ) -> None:
     """In manual mode: acknowledge and forward to tutor."""
     await message.answer("Ваш преподаватель ответит в ближайшее время.")
@@ -185,7 +187,7 @@ async def _handle_manual(
     attendee = booking.get("attendee") or {}
     student_name = attendee.get("name", "Студент")
     notice = (
-        f"<b>Сообщение от студента</b> (manual)\n"
+        f"<b>Сообщение от студента</b> ({context_label})\n"
         f"Студент: {student_name}\n"
         f"ID брони: <code>{booking_id}</code>\n\n"
         f"{student_text}"
@@ -221,6 +223,7 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
     await conversations.append(settings.state_path, booking_id, "user", text)
 
     chat = await conversations.load_chat(settings.state_path, booking_id)
+    controls = await load_controls(settings.state_path)
     mode = chat.mode
     await conversations.update_metadata(
         settings.state_path,
@@ -230,8 +233,63 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
         status="manual_takeover" if mode == OperatingMode.MANUAL else "active",
     )
 
+    if not controls.get("global_automation_enabled", True):
+        await audit_log(
+            "automation",
+            "blocked_global",
+            booking_id=booking_id,
+            actor="system",
+            detail={"reason": controls.get("reason")},
+        )
+        await conversations.update_metadata(
+            settings.state_path,
+            booking_id,
+            current_stage="automation_paused_global",
+            status="paused",
+        )
+        await _handle_manual(
+            message,
+            booking,
+            settings,
+            booking_id,
+            text,
+            context_label="global-stop",
+        )
+        return
+
+    if not chat.automation_enabled:
+        await audit_log(
+            "automation",
+            "blocked_chat",
+            booking_id=booking_id,
+            actor="system",
+            detail={"mode": mode.value},
+        )
+        await conversations.update_metadata(
+            settings.state_path,
+            booking_id,
+            current_stage="automation_paused_chat",
+            status="manual_takeover",
+        )
+        await _handle_manual(
+            message,
+            booking,
+            settings,
+            booking_id,
+            text,
+            context_label="chat-stop",
+        )
+        return
+
     if mode == OperatingMode.MANUAL:
-        await _handle_manual(message, booking, settings, booking_id, text)
+        await _handle_manual(
+            message,
+            booking,
+            settings,
+            booking_id,
+            text,
+            context_label="manual",
+        )
         return
 
     # AUTO and SEMI_AUTO both call AI
@@ -288,6 +346,7 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
         )
 
     chat = await conversations.load_chat(settings.state_path, booking_id)
+    controls = await load_controls(settings.state_path)
     mode = chat.mode
     await conversations.update_metadata(
         settings.state_path,
@@ -297,9 +356,64 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
         status="manual_takeover" if mode == OperatingMode.MANUAL else "active",
     )
 
+    image_text = f"[image] {caption}" if caption else "[image]"
+
+    if not controls.get("global_automation_enabled", True):
+        await audit_log(
+            "automation",
+            "blocked_global",
+            booking_id=booking_id,
+            actor="system",
+            detail={"reason": controls.get("reason"), "message_type": "image"},
+        )
+        await conversations.update_metadata(
+            settings.state_path,
+            booking_id,
+            current_stage="automation_paused_global",
+            status="paused",
+        )
+        await _handle_manual(
+            message,
+            booking,
+            settings,
+            booking_id,
+            image_text,
+            context_label="global-stop",
+        )
+        return
+
+    if not chat.automation_enabled:
+        await audit_log(
+            "automation",
+            "blocked_chat",
+            booking_id=booking_id,
+            actor="system",
+            detail={"mode": mode.value, "message_type": "image"},
+        )
+        await conversations.update_metadata(
+            settings.state_path,
+            booking_id,
+            current_stage="automation_paused_chat",
+            status="manual_takeover",
+        )
+        await _handle_manual(
+            message,
+            booking,
+            settings,
+            booking_id,
+            image_text,
+            context_label="chat-stop",
+        )
+        return
+
     if mode == OperatingMode.MANUAL:
         await _handle_manual(
-            message, booking, settings, booking_id, f"[image] {caption}" if caption else "[image]"
+            message,
+            booking,
+            settings,
+            booking_id,
+            image_text,
+            context_label="manual",
         )
         return
 

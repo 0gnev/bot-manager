@@ -21,7 +21,14 @@ from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.config import Settings, get_settings
 from bridge.delivery import send_student_message
-from bridge.state import bookings, conversations, escalations, OperatingMode
+from bridge.state import (
+    bookings,
+    conversations,
+    escalations,
+    load_controls,
+    OperatingMode,
+    save_controls,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +68,17 @@ class ReplyResponse(BaseModel):
 
 class ModeRequest(BaseModel):
     mode: OperatingMode
+
+
+class ChatAutomationRequest(BaseModel):
+    enabled: bool
+    assigned_human: str | None = "tutor"
+    reason: str | None = None
+
+
+class GlobalAutomationRequest(BaseModel):
+    enabled: bool
+    reason: str | None = None
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -230,6 +248,7 @@ async def set_chat_mode(
     chat.automation_enabled = body.mode != OperatingMode.MANUAL
     chat.status = "manual_takeover" if body.mode == OperatingMode.MANUAL else "active"
     chat.current_stage = "mode_changed"
+    chat.assigned_human = "tutor" if body.mode == OperatingMode.MANUAL else None
     await conversations.save_chat(settings.state_path, chat)
 
     await audit_log(
@@ -241,3 +260,94 @@ async def set_chat_mode(
     )
 
     return {"ok": True, "booking_id": booking_id, "mode": body.mode.value}
+
+
+@router.post(
+    "/chats/{booking_id}/automation",
+    dependencies=[Depends(_verify_token)],
+)
+async def set_chat_automation(
+    booking_id: str,
+    body: ChatAutomationRequest,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Explicitly enable or disable automation for a single chat."""
+    chat = await conversations.load_chat(settings.state_path, booking_id)
+    chat.automation_enabled = body.enabled
+    if body.enabled:
+        chat.status = "active"
+        chat.current_stage = "automation_resumed"
+        if chat.mode == OperatingMode.MANUAL:
+            chat.mode = OperatingMode.SEMI_AUTO
+        chat.assigned_human = None
+        chat.escalation_reason = None
+    else:
+        chat.status = "manual_takeover"
+        chat.current_stage = "manual_takeover"
+        chat.mode = OperatingMode.MANUAL
+        chat.assigned_human = body.assigned_human or "tutor"
+        if body.reason:
+            chat.escalation_reason = body.reason
+    await conversations.save_chat(settings.state_path, chat)
+
+    await audit_log(
+        "automation",
+        "chat_toggled",
+        booking_id=booking_id,
+        actor="tutor",
+        detail={
+            "enabled": body.enabled,
+            "assigned_human": chat.assigned_human,
+            "reason": body.reason,
+            "via": "api",
+        },
+    )
+
+    return {
+        "ok": True,
+        "booking_id": booking_id,
+        "automation_enabled": chat.automation_enabled,
+        "mode": chat.mode.value,
+        "status": chat.status,
+    }
+
+
+@router.get(
+    "/automation",
+    dependencies=[Depends(_verify_token)],
+)
+async def get_global_automation(
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Return current global automation control state."""
+    return await load_controls(settings.state_path)
+
+
+@router.post(
+    "/automation",
+    dependencies=[Depends(_verify_token)],
+)
+async def set_global_automation(
+    body: GlobalAutomationRequest,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Enable or disable automation globally."""
+    controls = await save_controls(
+        settings.state_path,
+        global_automation_enabled=body.enabled,
+        updated_by="tutor",
+        reason=body.reason,
+    )
+
+    await audit_log(
+        "automation",
+        "global_toggled",
+        actor="tutor",
+        detail={
+            "enabled": body.enabled,
+            "reason": body.reason,
+            "via": "api",
+        },
+    )
+
+    return {"ok": True, **controls}
