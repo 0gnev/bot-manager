@@ -6,3 +6,27 @@ escalate_when:
   - The student asks about grades.
   - Individual feedback is needed.
   - You are not confident in the answer.
+
+stop_trigger_keywords:
+  human_request:
+    - "человек"
+    - "преподавател"
+    - "менеджер"
+    - "оператор"
+    - "свяжите"
+    - "позовите"
+  complaint:
+    - "жалоб"
+    - "недоволен"
+    - "недовольна"
+    - "плохо"
+    - "ужас"
+    - "претензи"
+    - "конфликт"
+  payment_issue:
+    - "оплат"
+    - "платеж"
+    - "платёж"
+    - "чек"
+    - "возврат"
+    - "refund"

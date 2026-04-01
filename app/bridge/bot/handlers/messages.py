@@ -18,6 +18,7 @@ from bridge.bot import registry
 from bridge.clients.openclaw import OpenclawClient
 from bridge.config import Settings
 from bridge.escalation.handler import escalate
+from bridge.policies import evaluate_ai_response
 from bridge.state import bookings, conversations, OperatingMode
 from obsidian_adapter.reader import search as knowledge_search
 from telegram_adapter import templates
@@ -72,7 +73,7 @@ async def _handle_semi_auto(
     settings: Settings,
     booking_id: str,
 ) -> None:
-    """In semi-auto: submit draft for tutor approval via inline buttons."""
+    """In approval mode: submit draft for tutor review."""
     action = response.get("action", "answer")
     content = response.get("content", "")
     confidence = response.get("confidence", 0.0)
@@ -83,7 +84,7 @@ async def _handle_semi_auto(
         return
 
     # Submit for approval via the approvals queue
-    await submit_for_approval(
+    approval = await submit_for_approval(
         booking_id=booking_id,
         student_chat_id=message.from_user.id,
         draft_content=content,
@@ -91,6 +92,62 @@ async def _handle_semi_auto(
         confidence=confidence,
         settings=settings,
     )
+    if approval is None:
+        await escalate(message, booking, content or "Требуется проверка преподавателя.", settings)
+        return
+
+    await message.answer(
+        "Ваш преподаватель проверит ответ и отправит его вручную."
+    )
+
+
+async def _apply_policy_result(
+    message: Message,
+    booking: dict,
+    response: dict,
+    settings: Settings,
+    booking_id: str,
+    *,
+    student_text: str,
+) -> None:
+    tutor_available = bool(getattr(settings, "tutor_chat_id", None))
+    chat = await conversations.load_chat(settings.state_path, booking_id)
+    decision = evaluate_ai_response(
+        response=response,
+        booking=booking,
+        mode=chat.mode,
+        student_text=student_text,
+        tutor_available=tutor_available,
+    )
+
+    await audit_log(
+        "policy",
+        "evaluated",
+        booking_id=booking_id,
+        actor="system",
+        detail={
+            "route": decision.route,
+            "reason": decision.reason,
+            "action": response.get("action"),
+            "confidence": response.get("confidence"),
+        },
+    )
+
+    if decision.route == "send":
+        await _handle_ai_response(message, booking, response, settings, booking_id)
+        return
+
+    if decision.route == "approval":
+        await _handle_semi_auto(message, booking, response, settings, booking_id)
+        return
+
+    if decision.route == "escalate":
+        escalation_text = response.get("content") if response.get("action") == "escalate" else student_text
+        await escalate(message, booking, escalation_text or student_text, settings)
+        return
+
+    logger.warning("Policy blocked outbound reply: booking=%s reason=%s", booking_id, decision.reason)
+    await message.answer("Сейчас я не могу ответить автоматически.")
 
 
 async def _handle_manual(
@@ -169,10 +226,14 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
         detail={"action": action, "confidence": response.get("confidence")},
     )
 
-    if mode == OperatingMode.SEMI_AUTO:
-        await _handle_semi_auto(message, booking, response, settings, booking_id)
-    else:
-        await _handle_ai_response(message, booking, response, settings, booking_id)
+    await _apply_policy_result(
+        message,
+        booking,
+        response,
+        settings,
+        booking_id,
+        student_text=text,
+    )
 
 
 # -- Photo messages ------------------------------------------------------------
@@ -228,7 +289,11 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
         knowledge=knowledge,
     )
 
-    if mode == OperatingMode.SEMI_AUTO:
-        await _handle_semi_auto(message, booking, response, settings, booking_id)
-    else:
-        await _handle_ai_response(message, booking, response, settings, booking_id)
+    await _apply_policy_result(
+        message,
+        booking,
+        response,
+        settings,
+        booking_id,
+        student_text=caption or "[image]",
+    )

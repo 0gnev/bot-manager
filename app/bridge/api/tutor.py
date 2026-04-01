@@ -5,6 +5,7 @@ Endpoints:
   POST /api/tutor/reply          — reply to a pending escalation
   GET  /api/tutor/escalations    — list pending escalations
   GET  /api/tutor/escalations/{booking_id} — get escalation details
+  POST /api/tutor/chats/{booking_id}/mode  — switch chat mode
 
 Auth: Bearer token (tutor_api_token; falls back to gateway_auth_token).
 """
@@ -13,13 +14,13 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 
 from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.config import Settings, get_settings
-from bridge.state import bookings, escalations
+from bridge.state import bookings, conversations, escalations, OperatingMode
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,10 @@ class ReplyResponse(BaseModel):
     student_notified: bool
 
 
+class ModeRequest(BaseModel):
+    mode: OperatingMode
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 
@@ -91,6 +96,9 @@ async def tutor_reply(
             try:
                 await student_bot.send_message(student_id, body.text)
                 student_notified = True
+                await conversations.append(
+                    settings.state_path, body.booking_id, "assistant", body.text
+                )
                 logger.info(
                     "Tutor reply sent: booking=%s → student=%s",
                     body.booking_id, student_id,
@@ -182,3 +190,30 @@ async def get_escalation(
         esc["start_time"] = booking.get("start_time")
 
     return esc
+
+
+@router.post(
+    "/chats/{booking_id}/mode",
+    dependencies=[Depends(_verify_token)],
+)
+async def set_chat_mode(
+    booking_id: str,
+    body: ModeRequest,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Switch the chat's operating mode through the REST control path."""
+    chat = await conversations.load_chat(settings.state_path, booking_id)
+    chat.mode = body.mode
+    if body.mode != OperatingMode.SEMI_AUTO:
+        chat.draft = None
+    await conversations.save_chat(settings.state_path, chat)
+
+    await audit_log(
+        "mode",
+        "changed",
+        booking_id=booking_id,
+        actor="tutor",
+        detail={"new_mode": body.mode.value, "via": "api"},
+    )
+
+    return {"ok": True, "booking_id": booking_id, "mode": body.mode.value}

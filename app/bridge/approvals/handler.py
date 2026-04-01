@@ -1,19 +1,14 @@
 """
 Approval lifecycle.
 
-1. AI generates a draft -> submit_for_approval() sends it to tutor with
-   inline approve/reject buttons.
-2. Tutor taps Approve -> approve() sends draft to student.
-3. Tutor taps Reject  -> reject() discards draft.
-4. Tutor replies to the approval message -> edit_and_approve() sends
-   the tutor's edited version to student.
+1. AI generates a draft -> submit_for_approval() stores it and notifies tutor.
+2. Tutor approves/rejects/edits through the REST API.
+3. Bridge sends the final result to the student and updates state.
 """
 
 from __future__ import annotations
 
 import logging
-
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bridge.audit import audit_log
 from bridge.bot import registry
@@ -24,31 +19,17 @@ from telegram_adapter import templates
 logger = logging.getLogger(__name__)
 
 
-def _approval_keyboard(approval_id: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="Approve",
-                callback_data=f"appr:approve:{approval_id}",
-            ),
-            InlineKeyboardButton(
-                text="Reject",
-                callback_data=f"appr:reject:{approval_id}",
-            ),
-        ],
-    ])
-
-
 def _format_approval_notice(data: dict) -> str:
     action_label = "Ответ" if data["action"] == "answer" else "Уточнение"
     confidence_pct = int(data["confidence"] * 100)
     return (
         f"<b>Черновик для проверки</b>\n"
+        f"Approval ID: <code>{data['approval_id']}</code>\n"
         f"Тип: {action_label} (уверенность: {confidence_pct}%)\n"
         f"Бронь: <code>{data['booking_id']}</code>\n\n"
         f"{data['draft_content']}\n\n"
-        "<i>Нажмите кнопку или ответьте на это сообщение, "
-        "чтобы отредактировать и отправить.</i>"
+        "<i>Дальнейшие действия выполняются через REST API "
+        "(`/api/approvals` и `/api/tutor`).</i>"
     )
 
 
@@ -86,11 +67,7 @@ async def submit_for_approval(
     )
 
     notice = _format_approval_notice(data)
-    keyboard = _approval_keyboard(data["approval_id"])
-
-    sent = await owner_bot.send_message(
-        tutor_chat_id, notice, reply_markup=keyboard,
-    )
+    sent = await owner_bot.send_message(tutor_chat_id, notice)
 
     await approvals.set_tutor_message_id(
         settings.state_path, data["approval_id"], sent.message_id,

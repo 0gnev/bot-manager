@@ -9,6 +9,9 @@ Two bots, one Dispatcher:
 
 RoleMiddleware injects `role` into every handler based on which bot
 received the update. Settings is injected via workflow_data.
+
+Only student-facing Telegram handlers are mounted here. Tutor/admin control
+is handled via the REST API because the owner bot is managed by OpenClaw.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from aiogram.enums import ParseMode
 
 from bridge.bot import registry
 from bridge.bot.middleware import IdempotencyMiddleware, RoleMiddleware
-from bridge.bot.handlers import start, tutor, messages
+from bridge.bot.handlers import start, messages
 from bridge.config import Settings
 
 
@@ -36,8 +39,6 @@ def create_bots_and_dispatcher(settings: Settings) -> tuple[Bot, Dispatcher]:
     dp.update.middleware(IdempotencyMiddleware())
     dp.update.middleware(RoleMiddleware(student_token=settings.telegram_bot_token_student))
 
-    # Tutor router first (commands + callbacks before catch-all text handler)
-    dp.include_router(tutor.router)
     dp.include_router(start.router)
     dp.include_router(messages.router)
 
