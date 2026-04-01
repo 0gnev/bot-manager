@@ -12,6 +12,7 @@ from aiogram.types import Message
 
 from bridge.audit import audit_log
 from bridge.config import Settings
+from bridge.delivery import send_student_message
 from bridge.state import bookings
 from telegram_adapter.deeplink import parse_start_payload
 from telegram_adapter import templates
@@ -77,9 +78,23 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
     attendee = booking.get("attendee") or {}
     student_name = attendee.get("name", "")
 
-    await message.answer(templates.welcome(student_name, event_title, start_time))
-    await message.answer(
-        templates.session_details(event_title, start_time, end_time, meeting_url),
+    await send_student_message(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text=templates.welcome(student_name, event_title, start_time),
+        booking_id=booking_id,
+        settings=settings,
+        source="start_welcome",
+        actor="system",
+    )
+    await send_student_message(
+        bot=message.bot,
+        chat_id=message.chat.id,
+        text=templates.session_details(event_title, start_time, end_time, meeting_url),
+        booking_id=booking_id,
+        settings=settings,
+        source="start_session_details",
+        actor="system",
         disable_web_page_preview=True,
     )
     logger.info("Student linked: user_id=%s → booking=%s", message.from_user.id, booking_id)

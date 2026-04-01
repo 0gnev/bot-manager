@@ -13,6 +13,7 @@ from plannerka_adapter.models import PlanerkaWebhookPayload
 from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.config import Settings
+from bridge.delivery import send_student_message
 from bridge.state import bookings
 from telegram_adapter import templates
 
@@ -116,7 +117,7 @@ async def _on_rescheduled(
         detail={"start_time": existing.get("start_time")},
     )
 
-    await _notify_student(existing, templates.booking_rescheduled(
+    await _notify_student(settings, existing, templates.booking_rescheduled(
         event_title=existing.get("title", "Занятие"),
         start_time=_parse_dt(existing.get("start_time")),
         end_time=_parse_dt(existing.get("end_time")),
@@ -138,12 +139,12 @@ async def _on_cancelled(
     logger.info("Booking cancelled: %s", booking_id)
     await audit_log("booking", "cancelled", booking_id=booking_id, actor="system")
 
-    await _notify_student(existing, templates.booking_cancelled(
+    await _notify_student(settings, existing, templates.booking_cancelled(
         event_title=existing.get("title", "Занятие"),
     ))
 
 
-async def _notify_student(booking: dict, text: str) -> None:
+async def _notify_student(settings: Settings, booking: dict, text: str) -> None:
     """Send a message to the student if they're linked to this booking."""
     telegram_user_id = booking.get("telegram_user_id")
     if not telegram_user_id:
@@ -154,11 +155,17 @@ async def _notify_student(booking: dict, text: str) -> None:
         logger.warning("Student bot not available for notification")
         return
 
-    try:
-        await bot.send_message(telegram_user_id, text)
+    sent = await send_student_message(
+        bot=bot,
+        chat_id=telegram_user_id,
+        text=text,
+        booking_id=booking.get("booking_id", ""),
+        settings=settings,
+        source="booking_notification",
+        actor="system",
+    )
+    if sent:
         logger.info("Student notified: user_id=%s booking=%s", telegram_user_id, booking.get("booking_id"))
-    except Exception as exc:
-        logger.error("Failed to notify student %s: %s", telegram_user_id, exc)
 
 
 def _parse_dt(value: str | None) -> datetime | None:

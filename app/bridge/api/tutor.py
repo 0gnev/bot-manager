@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.config import Settings, get_settings
+from bridge.delivery import send_student_message
 from bridge.state import bookings, conversations, escalations, OperatingMode
 
 logger = logging.getLogger(__name__)
@@ -94,15 +95,20 @@ async def tutor_reply(
         student_bot = registry.get_student()
         if student_bot:
             try:
-                await student_bot.send_message(student_id, body.text)
-                student_notified = True
-                await conversations.append(
-                    settings.state_path, body.booking_id, "assistant", body.text
+                student_notified = await send_student_message(
+                    bot=student_bot,
+                    chat_id=student_id,
+                    text=body.text,
+                    booking_id=body.booking_id,
+                    settings=settings,
+                    source="tutor_api_reply",
+                    actor="tutor",
                 )
-                logger.info(
-                    "Tutor reply sent: booking=%s → student=%s",
-                    body.booking_id, student_id,
-                )
+                if student_notified:
+                    logger.info(
+                        "Tutor reply sent: booking=%s → student=%s",
+                        body.booking_id, student_id,
+                    )
             except Exception as exc:
                 logger.error("Failed to send tutor reply to student %s: %s", student_id, exc)
         else:
