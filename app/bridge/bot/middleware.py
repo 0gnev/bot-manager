@@ -13,7 +13,7 @@ from typing import Any, Awaitable, Callable
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, Update
 
-from bridge.idempotency import is_duplicate, mark_processed
+from bridge.idempotency import abandon_processing, begin_processing, finish_processing
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +49,14 @@ class IdempotencyMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         key = f"tg:{update.update_id}"
-        if await is_duplicate(key):
+        if await begin_processing(key):
             logger.debug("Duplicate Telegram update ignored: %s", update.update_id)
             return None
 
-        result = await handler(event, data)
-        await mark_processed(key)
+        try:
+            result = await handler(event, data)
+        except Exception:
+            await abandon_processing(key)
+            raise
+        await finish_processing(key)
         return result

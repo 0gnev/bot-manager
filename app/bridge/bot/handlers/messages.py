@@ -340,10 +340,10 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
     booking_id = booking["booking_id"]
 
     caption = message.caption or ""
-    if caption:
-        await conversations.append(
-            settings.state_path, booking_id, "user", f"[image] {caption}"
-        )
+    image_text = f"[image] {caption}" if caption else "[image]"
+    await conversations.append(
+        settings.state_path, booking_id, "user", image_text
+    )
 
     chat = await conversations.load_chat(settings.state_path, booking_id)
     controls = await load_controls(settings.state_path)
@@ -355,8 +355,6 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
         current_stage="student_image_received",
         status="manual_takeover" if mode == OperatingMode.MANUAL else "active",
     )
-
-    image_text = f"[image] {caption}" if caption else "[image]"
 
     if not controls.get("global_automation_enabled", True):
         await audit_log(
@@ -435,7 +433,7 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
         image_path=local_path,
         caption=caption,
         booking_context=booking,
-        history=history,
+        history=history[:-1],  # exclude the image message we just appended
         knowledge=knowledge,
     )
 

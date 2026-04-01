@@ -107,32 +107,63 @@ async def tutor_reply(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Booking not found")
 
     student_id = booking.get("telegram_user_id")
-    student_notified = False
+    if not student_id:
+        await audit_log(
+            "escalation",
+            "reply_delivery_blocked",
+            booking_id=body.booking_id,
+            actor="tutor",
+            outcome="failure",
+            detail={"via": "api", "error": "student_not_linked"},
+        )
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Student is not linked to this booking",
+        )
 
-    if student_id:
-        student_bot = registry.get_student()
-        if student_bot:
-            try:
-                student_notified = await send_student_message(
-                    bot=student_bot,
-                    chat_id=student_id,
-                    text=body.text,
-                    booking_id=body.booking_id,
-                    settings=settings,
-                    source="tutor_api_reply",
-                    actor="tutor",
-                )
-                if student_notified:
-                    logger.info(
-                        "Tutor reply sent: booking=%s → student=%s",
-                        body.booking_id, student_id,
-                    )
-            except Exception as exc:
-                logger.error("Failed to send tutor reply to student %s: %s", student_id, exc)
-        else:
-            logger.warning("Student bot not available for tutor reply")
-    else:
-        logger.warning("Student not linked for booking %s", body.booking_id)
+    student_bot = registry.get_student()
+    if student_bot is None:
+        await audit_log(
+            "escalation",
+            "reply_delivery_blocked",
+            booking_id=body.booking_id,
+            actor="tutor",
+            outcome="failure",
+            detail={"via": "api", "error": "student_bot_unavailable"},
+        )
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Student bot is unavailable",
+        )
+
+    student_notified = await send_student_message(
+        bot=student_bot,
+        chat_id=student_id,
+        text=body.text,
+        booking_id=body.booking_id,
+        settings=settings,
+        source="tutor_api_reply",
+        actor="tutor",
+    )
+    if not student_notified:
+        await audit_log(
+            "escalation",
+            "reply_delivery_blocked",
+            booking_id=body.booking_id,
+            actor="tutor",
+            outcome="failure",
+            detail={"via": "api", "error": "student_delivery_failed"},
+        )
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to deliver tutor reply to student",
+        )
+
+    logger.info(
+        "Tutor reply sent: booking=%s → student=%s",
+        body.booking_id,
+        student_id,
+    )
 
     await escalations.resolve(
         settings.state_path,
