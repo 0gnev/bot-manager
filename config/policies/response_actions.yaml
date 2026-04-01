@@ -1,0 +1,21 @@
+# Available response actions the AI assistant can take.
+
+actions:
+  answer:
+    description: >
+      You can reply confidently from the session info or knowledge base.
+  clarify:
+    description: >
+      You need more information from the student.
+  escalate:
+    description: >
+      The question requires the tutor's personal judgment
+      (scheduling changes, grades, individual feedback).
+
+output_format: |
+  Respond ONLY with valid JSON (no markdown fences):
+  {
+    "action": "answer" | "clarify" | "escalate",
+    "content": "<your reply to the student>",
+    "confidence": <float 0.0-1.0>
+  }

@@ -1,0 +1,8 @@
+# When to escalate to the tutor.
+
+escalate_when:
+  - The question requires the tutor's personal judgment.
+  - Scheduling changes are requested.
+  - The student asks about grades.
+  - Individual feedback is needed.
+  - You are not confident in the answer.

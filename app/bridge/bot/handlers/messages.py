@@ -1,21 +1,24 @@
 """
 Student message and image handlers.
 Routes to openclaw and dispatches the response.
+Behavior depends on the chat's operating mode.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.types import Message, PhotoSize
 
+from bridge.approvals.handler import submit_for_approval
+from bridge.audit import audit_log
+from bridge.bot import registry
 from bridge.clients.openclaw import OpenclawClient
 from bridge.config import Settings
 from bridge.escalation.handler import escalate
-from bridge.state import bookings, conversations
+from bridge.state import bookings, conversations, OperatingMode
 from obsidian_adapter.reader import search as knowledge_search
 from telegram_adapter import templates
 
@@ -23,7 +26,95 @@ logger = logging.getLogger(__name__)
 router = Router(name="messages")
 
 
-# ── Text messages ─────────────────────────────────────────────────────────────
+# -- Helpers -------------------------------------------------------------------
+
+async def _notify_tutor(settings: Settings, booking_id: str, text: str) -> None:
+    """Send a notification to the tutor via the owner bot."""
+    tutor_chat_id = getattr(settings, "tutor_chat_id", None)
+    if not tutor_chat_id:
+        logger.warning("TUTOR_CHAT_ID not set; cannot notify tutor")
+        return
+    owner_bot = registry.get_owner()
+    if owner_bot is None:
+        logger.error("Owner bot not available for tutor notification")
+        return
+    try:
+        await owner_bot.send_message(int(tutor_chat_id), text)
+    except Exception as exc:
+        logger.error("Failed to notify tutor: %s", exc)
+
+
+async def _handle_ai_response(
+    message: Message,
+    booking: dict,
+    response: dict,
+    settings: Settings,
+    booking_id: str,
+) -> None:
+    """Process an AI response in auto mode."""
+    action = response.get("action", "answer")
+    content = response.get("content", "")
+
+    if action == "escalate":
+        await escalate(message, booking, content, settings)
+    elif action == "clarify":
+        await message.answer(templates.clarify(content))
+        await conversations.append(settings.state_path, booking_id, "assistant", content)
+    else:
+        await message.answer(templates.answer(content))
+        await conversations.append(settings.state_path, booking_id, "assistant", content)
+
+
+async def _handle_semi_auto(
+    message: Message,
+    booking: dict,
+    response: dict,
+    settings: Settings,
+    booking_id: str,
+) -> None:
+    """In semi-auto: submit draft for tutor approval via inline buttons."""
+    action = response.get("action", "answer")
+    content = response.get("content", "")
+    confidence = response.get("confidence", 0.0)
+
+    # Escalations bypass draft approval
+    if action == "escalate":
+        await escalate(message, booking, content, settings)
+        return
+
+    # Submit for approval via the approvals queue
+    await submit_for_approval(
+        booking_id=booking_id,
+        student_chat_id=message.from_user.id,
+        draft_content=content,
+        action=action,
+        confidence=confidence,
+        settings=settings,
+    )
+
+
+async def _handle_manual(
+    message: Message,
+    booking: dict,
+    settings: Settings,
+    booking_id: str,
+    student_text: str,
+) -> None:
+    """In manual mode: acknowledge and forward to tutor."""
+    await message.answer("Ваш преподаватель ответит в ближайшее время.")
+
+    attendee = booking.get("attendee") or {}
+    student_name = attendee.get("name", "Студент")
+    notice = (
+        f"<b>Сообщение от студента</b> (manual)\n"
+        f"Студент: {student_name}\n"
+        f"ID брони: <code>{booking_id}</code>\n\n"
+        f"{student_text}"
+    )
+    await _notify_tutor(settings, booking_id, notice)
+
+
+# -- Text messages -------------------------------------------------------------
 
 @router.message(F.text)
 async def on_text(message: Message, role: str, settings: Settings) -> None:
@@ -39,9 +130,25 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
 
     booking_id = booking["booking_id"]
     text = message.text
+    user_id = str(message.from_user.id)
+
+    await audit_log(
+        "message", "student_text_received",
+        booking_id=booking_id,
+        actor=user_id,
+        detail={"length": len(text)},
+    )
 
     await conversations.append(settings.state_path, booking_id, "user", text)
 
+    chat = await conversations.load_chat(settings.state_path, booking_id)
+    mode = chat.mode
+
+    if mode == OperatingMode.MANUAL:
+        await _handle_manual(message, booking, settings, booking_id, text)
+        return
+
+    # AUTO and SEMI_AUTO both call AI
     history = await conversations.load(settings.state_path, booking_id)
     knowledge = await knowledge_search(settings.knowledge_path, text, limit=3)
     client = OpenclawClient(settings)
@@ -54,19 +161,21 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
     )
 
     action = response.get("action", "answer")
-    content = response.get("content", "")
 
-    if action == "escalate":
-        await escalate(message, booking, content, settings)
-    elif action == "clarify":
-        await message.answer(templates.clarify(content))
-        await conversations.append(settings.state_path, booking_id, "assistant", content)
+    await audit_log(
+        "message", "ai_response",
+        booking_id=booking_id,
+        actor="system",
+        detail={"action": action, "confidence": response.get("confidence")},
+    )
+
+    if mode == OperatingMode.SEMI_AUTO:
+        await _handle_semi_auto(message, booking, response, settings, booking_id)
     else:
-        await message.answer(templates.answer(content))
-        await conversations.append(settings.state_path, booking_id, "assistant", content)
+        await _handle_ai_response(message, booking, response, settings, booking_id)
 
 
-# ── Photo messages ────────────────────────────────────────────────────────────
+# -- Photo messages ------------------------------------------------------------
 
 @router.message(F.photo)
 async def on_photo(message: Message, role: str, settings: Settings) -> None:
@@ -81,6 +190,22 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
         return
 
     booking_id = booking["booking_id"]
+
+    caption = message.caption or ""
+    if caption:
+        await conversations.append(
+            settings.state_path, booking_id, "user", f"[image] {caption}"
+        )
+
+    chat = await conversations.load_chat(settings.state_path, booking_id)
+    mode = chat.mode
+
+    if mode == OperatingMode.MANUAL:
+        await _handle_manual(
+            message, booking, settings, booking_id, f"[image] {caption}" if caption else "[image]"
+        )
+        return
+
     await message.answer(templates.image_received())
 
     # Download the largest photo variant
@@ -90,12 +215,6 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
     upload_dir.mkdir(parents=True, exist_ok=True)
     local_path = str(upload_dir / f"{photo.file_id}.jpg")
     await message.bot.download_file(file.file_path, destination=local_path)
-
-    caption = message.caption or ""
-    if caption:
-        await conversations.append(
-            settings.state_path, booking_id, "user", f"[image] {caption}"
-        )
 
     history = await conversations.load(settings.state_path, booking_id)
     knowledge = await knowledge_search(settings.knowledge_path, caption, limit=3) if caption else []
@@ -109,11 +228,7 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
         knowledge=knowledge,
     )
 
-    action = response.get("action", "answer")
-    content = response.get("content", "")
-
-    if action == "escalate":
-        await escalate(message, booking, content or caption, settings, image_path=local_path)
+    if mode == OperatingMode.SEMI_AUTO:
+        await _handle_semi_auto(message, booking, response, settings, booking_id)
     else:
-        await message.answer(templates.answer(content))
-        await conversations.append(settings.state_path, booking_id, "assistant", content)
+        await _handle_ai_response(message, booking, response, settings, booking_id)

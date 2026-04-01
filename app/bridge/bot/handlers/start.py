@@ -10,6 +10,7 @@ from aiogram import Router
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
+from bridge.audit import audit_log
 from bridge.config import Settings
 from bridge.state import bookings
 from telegram_adapter.deeplink import parse_start_payload
@@ -23,6 +24,9 @@ router = Router(name="start")
 async def cmd_start(message: Message, role: str, settings: Settings) -> None:
     if role != "student":
         return
+
+    user_id = str(message.from_user.id)
+    await audit_log("bot", "start_command", actor=user_id)
 
     args = message.text.split(maxsplit=1)[1] if " " in (message.text or "") else ""
 
@@ -79,6 +83,11 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
         disable_web_page_preview=True,
     )
     logger.info("Student linked: user_id=%s → booking=%s", message.from_user.id, booking_id)
+    await audit_log(
+        "bot", "booking_linked",
+        booking_id=booking_id,
+        actor=user_id,
+    )
 
 
 def _parse_dt(value: str | None):

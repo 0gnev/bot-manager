@@ -10,6 +10,7 @@ import logging
 from datetime import datetime
 
 from plannerka_adapter.models import PlanerkaWebhookPayload
+from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.config import Settings
 from bridge.state import bookings
@@ -39,6 +40,13 @@ async def handle_webhook(body: dict, settings: Settings) -> None:
     if not booking_id:
         logger.warning("Planerka payload missing booking ID: %s", body)
         return
+
+    await audit_log(
+        "webhook", "received",
+        booking_id=booking_id,
+        actor="system",
+        detail={"event": payload.event},
+    )
 
     match payload.event:
         case "BOOKING_CREATED" | "BOOKING_STARTED":
@@ -75,6 +83,12 @@ async def _on_created(
 
     await bookings.save(settings.state_path, booking_id, data)
     logger.info("Booking created: %s | attendee=%s", booking_id, attendee and attendee.name)
+    await audit_log(
+        "booking", "created",
+        booking_id=booking_id,
+        actor="system",
+        detail={"attendee": attendee.name if attendee else None},
+    )
 
 
 async def _on_rescheduled(
@@ -95,6 +109,12 @@ async def _on_rescheduled(
 
     await bookings.save(settings.state_path, booking_id, existing)
     logger.info("Booking rescheduled: %s", booking_id)
+    await audit_log(
+        "booking", "rescheduled",
+        booking_id=booking_id,
+        actor="system",
+        detail={"start_time": existing.get("start_time")},
+    )
 
     await _notify_student(existing, templates.booking_rescheduled(
         event_title=existing.get("title", "Занятие"),
@@ -116,6 +136,7 @@ async def _on_cancelled(
     existing["status"] = "cancelled"
     await bookings.save(settings.state_path, booking_id, existing)
     logger.info("Booking cancelled: %s", booking_id)
+    await audit_log("booking", "cancelled", booking_id=booking_id, actor="system")
 
     await _notify_student(existing, templates.booking_cancelled(
         event_title=existing.get("title", "Занятие"),

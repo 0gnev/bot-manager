@@ -16,8 +16,11 @@ import sys
 import uvicorn
 from fastapi import FastAPI
 
+from bridge.api.approvals import router as approvals_router
+from bridge.api.audit import router as audit_router
 from bridge.api.tutor import router as tutor_router
 from bridge.config import get_settings
+from bridge.idempotency import init as init_idempotency, run_cleanup_loop
 from bridge.webhook.router import router as webhook_router
 
 logging.basicConfig(
@@ -32,6 +35,8 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Bot Manager Bridge", docs_url=None, redoc_url=None)
     app.include_router(webhook_router)
     app.include_router(tutor_router)
+    app.include_router(audit_router)
+    app.include_router(approvals_router)
 
     @app.get("/health")
     async def health() -> dict:
@@ -73,9 +78,12 @@ def _telegram_configured(settings) -> bool:
 
 async def main() -> None:
     settings = get_settings()
+
+    await init_idempotency(settings.state_path)
+
     app = create_app()
 
-    tasks = [run_server(app, settings)]
+    tasks = [run_server(app, settings), run_cleanup_loop()]
 
     if _telegram_configured(settings):
         tasks.append(run_polling(settings))

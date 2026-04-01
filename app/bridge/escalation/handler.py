@@ -15,6 +15,7 @@ from datetime import datetime
 
 from aiogram.types import Message
 
+from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.config import Settings
 from bridge.state import escalations
@@ -80,6 +81,12 @@ async def escalate(
 
     await message.answer(templates.escalated_to_tutor())
     logger.info("Escalated booking=%s → tutor chat=%s", booking_id, tutor_chat_id)
+    await audit_log(
+        "escalation", "created",
+        booking_id=booking_id,
+        actor=str(message.from_user.id),
+        detail={"has_image": image_path is not None},
+    )
 
 
 def _parse_dt(value: str | None) -> datetime | None:

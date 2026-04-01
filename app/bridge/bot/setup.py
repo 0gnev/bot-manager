@@ -18,8 +18,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from bridge.bot import registry
-from bridge.bot.middleware import RoleMiddleware
-from bridge.bot.handlers import start, messages
+from bridge.bot.middleware import IdempotencyMiddleware, RoleMiddleware
+from bridge.bot.handlers import start, tutor, messages
 from bridge.config import Settings
 
 
@@ -33,8 +33,11 @@ def create_bots_and_dispatcher(settings: Settings) -> tuple[Bot, Dispatcher]:
 
     dp = Dispatcher()
     dp.workflow_data["settings"] = settings
+    dp.update.middleware(IdempotencyMiddleware())
     dp.update.middleware(RoleMiddleware(student_token=settings.telegram_bot_token_student))
 
+    # Tutor router first (commands + callbacks before catch-all text handler)
+    dp.include_router(tutor.router)
     dp.include_router(start.router)
     dp.include_router(messages.router)
 

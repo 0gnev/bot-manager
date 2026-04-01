@@ -16,6 +16,7 @@ import logging
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 
+from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.config import Settings, get_settings
 from bridge.state import bookings, escalations
@@ -102,6 +103,12 @@ async def tutor_reply(
         logger.warning("Student not linked for booking %s", body.booking_id)
 
     await escalations.resolve(settings.state_path, body.booking_id, body.text)
+    await audit_log(
+        "escalation", "resolved",
+        booking_id=body.booking_id,
+        actor="tutor",
+        detail={"via": "api", "student_notified": student_notified},
+    )
 
     # Notify tutor in Telegram that reply was delivered
     owner_bot = registry.get_owner()
