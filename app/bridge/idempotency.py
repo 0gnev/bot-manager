@@ -20,6 +20,7 @@ CLEANUP_INTERVAL = 600  # 10 minutes
 
 # In-memory store: key -> expiry timestamp (wall clock)
 _store: dict[str, float] = {}
+_inflight: set[str] = set()
 _state_path: str | None = None
 _lock = asyncio.Lock()
 
@@ -84,13 +85,37 @@ async def mark_processed(key: str, ttl: float = DEFAULT_TTL) -> None:
     asyncio.create_task(_persist())
 
 
+async def begin_processing(key: str) -> bool:
+    """Atomically claim a key for processing. Returns True if duplicate/in-flight."""
+    async with _lock:
+        if key in _inflight or await is_duplicate(key):
+            return True
+        _inflight.add(key)
+        return False
+
+
+async def finish_processing(key: str, ttl: float = DEFAULT_TTL) -> None:
+    """Mark a claimed key as processed and release its in-flight claim."""
+    async with _lock:
+        _inflight.discard(key)
+        _store[key] = time.time() + ttl
+    asyncio.create_task(_persist())
+
+
+async def abandon_processing(key: str) -> None:
+    """Release an in-flight claim without marking the key as processed."""
+    async with _lock:
+        _inflight.discard(key)
+
+
 async def check_and_mark(key: str, ttl: float = DEFAULT_TTL) -> bool:
     """Atomic check-and-mark. Returns True if duplicate, False if new (and marks it)."""
     async with _lock:
-        if await is_duplicate(key):
+        if key in _inflight or await is_duplicate(key):
             return True
-        await mark_processed(key, ttl)
-        return False
+        _store[key] = time.time() + ttl
+    asyncio.create_task(_persist())
+    return False
 
 
 async def cleanup_expired() -> None:

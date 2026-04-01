@@ -116,9 +116,25 @@ class OpenclawClient:
                 try:
                     result = json.loads(raw)
                 except json.JSONDecodeError:
-                    # Model replied in plain text — wrap as a direct answer
-                    logger.warning("Openclaw returned non-JSON, wrapping as answer")
-                    result = {"action": "answer", "content": raw, "confidence": 0.8}
+                    logger.warning("Openclaw returned non-JSON, falling back to escalation")
+                    await audit_log(
+                        "ai",
+                        "response_received",
+                        actor="system",
+                        outcome="failure",
+                        detail={"error": "invalid_json"},
+                    )
+                    return _fallback()
+                if not isinstance(result, dict):
+                    logger.warning("Openclaw returned non-object JSON, falling back to escalation")
+                    await audit_log(
+                        "ai",
+                        "response_received",
+                        actor="system",
+                        outcome="failure",
+                        detail={"error": "invalid_payload_type"},
+                    )
+                    return _fallback()
                 await audit_log(
                     "ai", "response_received",
                     actor="system",

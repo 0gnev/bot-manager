@@ -11,7 +11,7 @@ import logging
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from bridge.config import Settings, get_settings
-from bridge.idempotency import is_duplicate, mark_processed
+from bridge.idempotency import abandon_processing, begin_processing, finish_processing
 from bridge.webhook.handler import handle_webhook
 
 logger = logging.getLogger(__name__)
@@ -59,11 +59,15 @@ async def planerka_webhook(
         ) from exc
 
     idem_key = _webhook_idempotency_key(body)
-    if await is_duplicate(idem_key):
+    if await begin_processing(idem_key):
         logger.info("Duplicate webhook ignored: event=%s key=%s", body.get("event"), idem_key)
         return {"ok": True, "duplicate": True}
 
     logger.info("Planerka webhook received: event=%s", body.get("event"))
-    await handle_webhook(body, settings)
-    await mark_processed(idem_key)
+    try:
+        await handle_webhook(body, settings)
+    except Exception:
+        await abandon_processing(idem_key)
+        raise
+    await finish_processing(idem_key)
     return {"ok": True}
