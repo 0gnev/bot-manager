@@ -1,7 +1,7 @@
 {
   "meta": {
     "lastTouchedVersion": "2026.3.23",
-    "lastTouchedAt": "2026-03-24T05:03:03.590Z"
+    "lastTouchedAt": "2026-03-24T05:45:31.178Z"
   },
   "agents": {
     "defaults": {
@@ -29,7 +29,8 @@
       "dmPolicy": "allowlist",
       "botToken": "6742104724:AAHcsvl0OxyIRuWh4COkzAbdEnTNO3czkUE",
       "allowFrom": [
-        "tg:438879394"
+        "tg:438879394",
+        "tg:215626239"
       ],
       "groupPolicy": "allowlist",
       "streaming": "block"
