@@ -15,38 +15,14 @@ from pathlib import Path
 
 import httpx
 
+from bridge.audit import audit_log
 from bridge.config import Settings
+from bridge.policies.loader import render_policy_block
+from bridge.prompts.loader import render_prompt
 
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = httpx.Timeout(60.0)
-
-_SYSTEM_PROMPT = """\
-You are a friendly assistant for an online tutoring service that prepares students for the EGE exam in computer science.
-You help students with questions about their upcoming session.
-
-Session info:
-{booking_context}
-{knowledge_section}
-Respond ONLY with valid JSON (no markdown fences):
-{{
-  "action": "answer" | "clarify" | "escalate",
-  "content": "<your reply to the student>",
-  "confidence": <float 0.0–1.0>
-}}
-
-Rules:
-- "answer"   — you can reply confidently from the session info or knowledge base
-- "clarify"  — you need more information from the student
-- "escalate" — the question requires the tutor's personal judgment (scheduling changes, grades, individual feedback)
-- Use the knowledge base articles when they are relevant to the student's question
-- Write content in Russian
-- NEVER reveal internal data: emails, phone numbers, IDs, system fields, JSON structures
-- NEVER claim you can send emails, make calls, or access external services
-- You can only communicate with the student through this chat
-- Keep replies concise and helpful
-- If unsure, escalate to the tutor rather than guessing
-"""
 
 
 class OpenclawClient:
@@ -57,7 +33,7 @@ class OpenclawClient:
             "Content-Type": "application/json",
         }
 
-    # ── Public interface ───────────────────────────────────────────────────────
+    # -- Public interface ------------------------------------------------------
 
     async def chat(
         self,
@@ -99,7 +75,7 @@ class OpenclawClient:
         messages.append({"role": "user", "content": content})
         return await self._complete(messages)
 
-    # ── Internals ──────────────────────────────────────────────────────────────
+    # -- Internals -------------------------------------------------------------
 
     def _build_messages(
         self, booking_context: dict, history: list[dict], knowledge: list[dict] | None = None
@@ -115,9 +91,12 @@ class OpenclawClient:
                 + "\n"
             )
         safe_context = _sanitize_booking(booking_context)
-        system = _SYSTEM_PROMPT.format(
+        policy_block = render_policy_block()
+        system = render_prompt(
+            "system",
             booking_context=json.dumps(safe_context, ensure_ascii=False, indent=2),
             knowledge_section=knowledge_section,
+            policy_block=policy_block,
         )
         messages: list[dict] = [{"role": "system", "content": system}]
         for entry in history:
@@ -128,22 +107,31 @@ class OpenclawClient:
     async def _complete(self, messages: list[dict]) -> dict:
         payload = {"model": "default", "messages": messages}
         url = f"{self._base_url}/v1/chat/completions"
+        await audit_log("ai", "call_made", actor="system", detail={"url": url})
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
                 resp = await client.post(url, json=payload, headers=self._headers)
                 resp.raise_for_status()
                 raw: str = resp.json()["choices"][0]["message"]["content"]
                 try:
-                    return json.loads(raw)
+                    result = json.loads(raw)
                 except json.JSONDecodeError:
                     # Model replied in plain text — wrap as a direct answer
                     logger.warning("Openclaw returned non-JSON, wrapping as answer")
-                    return {"action": "answer", "content": raw, "confidence": 0.8}
+                    result = {"action": "answer", "content": raw, "confidence": 0.8}
+                await audit_log(
+                    "ai", "response_received",
+                    actor="system",
+                    detail={"action": result.get("action"), "confidence": result.get("confidence")},
+                )
+                return result
         except httpx.HTTPStatusError as exc:
             logger.error("Openclaw HTTP error: %s", exc.response.text)
+            await audit_log("ai", "response_received", actor="system", outcome="failure", detail={"error": "http_error"})
             return _fallback()
         except Exception as exc:
             logger.error("Openclaw unreachable: %s", exc)
+            await audit_log("ai", "response_received", actor="system", outcome="failure", detail={"error": str(exc)[:200]})
             return _fallback()
 
 

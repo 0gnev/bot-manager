@@ -1,0 +1,4 @@
+# Confidence scoring rules.
+
+rules:
+  - If unsure, escalate to the tutor rather than guessing.

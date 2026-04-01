@@ -4,6 +4,11 @@ Tutor-side handlers.
 The tutor replies to an escalation by replying to the forwarded message.
 Bridge detects the reply-to message ID, looks up the escalation, and routes
 the answer back to the student via the student bot.
+
+Additional features:
+  - /mode {booking_id} auto|semi-auto|manual — switch operating mode
+  - Approval inline-button callbacks (approve/reject)
+  - Reply-to approval message = edit & approve
 """
 
 from __future__ import annotations
@@ -11,16 +16,103 @@ from __future__ import annotations
 import logging
 
 from aiogram import F, Router
-from aiogram.types import Message
+from aiogram.filters import Command
+from aiogram.types import CallbackQuery, Message
 
+from bridge.approvals import handler as approval_handler
+from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.config import Settings
-from bridge.state import bookings, escalations
+from bridge.state import approvals, bookings, conversations, escalations, OperatingMode
 from telegram_adapter import templates
 
 logger = logging.getLogger(__name__)
 router = Router(name="tutor")
 
+
+# -- /mode command -------------------------------------------------------------
+
+@router.message(Command("mode"))
+async def on_mode(message: Message, role: str, settings: Settings) -> None:
+    if role != "tutor":
+        return
+
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer(
+            "Использование: <code>/mode {booking_id} auto|semi-auto|manual</code>"
+        )
+        return
+
+    booking_id = parts[1]
+    mode_str = parts[2].strip().lower()
+
+    try:
+        new_mode = OperatingMode(mode_str)
+    except ValueError:
+        await message.answer(
+            f"Неизвестный режим: <code>{mode_str}</code>\n"
+            "Допустимые: <code>auto</code>, <code>semi-auto</code>, <code>manual</code>"
+        )
+        return
+
+    chat = await conversations.load_chat(settings.state_path, booking_id)
+    chat.mode = new_mode
+    if new_mode != OperatingMode.SEMI_AUTO:
+        chat.draft = None
+    await conversations.save_chat(settings.state_path, chat)
+
+    await message.answer(f"Режим для <code>{booking_id}</code>: <b>{new_mode.value}</b>")
+    logger.info("Mode changed: booking=%s mode=%s", booking_id, new_mode.value)
+
+    await audit_log(
+        "mode", "changed",
+        booking_id=booking_id,
+        actor="tutor",
+        detail={"new_mode": new_mode.value},
+    )
+
+
+# -- Approval inline-button callbacks -----------------------------------------
+
+@router.callback_query(F.data.startswith("appr:"))
+async def on_approval_callback(
+    callback: CallbackQuery, role: str, settings: Settings,
+) -> None:
+    if role != "tutor":
+        await callback.answer("Нет доступа")
+        return
+
+    parts = callback.data.split(":", 2)
+    if len(parts) != 3:
+        await callback.answer("Неверный формат")
+        return
+
+    _, action, approval_id = parts
+
+    if action == "approve":
+        ok = await approval_handler.approve(approval_id, settings)
+        if ok:
+            await callback.answer("Одобрено и отправлено студенту")
+            await callback.message.edit_reply_markup(reply_markup=None)
+            await callback.message.reply("Ответ отправлен студенту.")
+        else:
+            await callback.answer("Не удалось одобрить (уже обработано?)")
+
+    elif action == "reject":
+        ok = await approval_handler.reject(approval_id, settings)
+        if ok:
+            await callback.answer("Отклонено")
+            await callback.message.edit_reply_markup(reply_markup=None)
+            await callback.message.reply("Черновик отклонён.")
+        else:
+            await callback.answer("Не удалось отклонить (уже обработано?)")
+
+    else:
+        await callback.answer("Неизвестное действие")
+
+
+# -- Tutor reply-to: approval edit or escalation response ----------------------
 
 @router.message(F.text, F.reply_to_message)
 async def on_tutor_reply(message: Message, role: str, settings: Settings) -> None:
@@ -28,6 +120,22 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         return
 
     replied_to_id = message.reply_to_message.message_id
+
+    # Check if this is a reply to an approval message (edit & approve)
+    approval = await approvals.find_pending_by_tutor_message(
+        settings.state_path, replied_to_id,
+    )
+    if approval:
+        ok = await approval_handler.edit_and_approve(
+            approval["approval_id"], message.text, settings,
+        )
+        if ok:
+            await message.answer("Отредактированный ответ отправлен студенту.")
+        else:
+            await message.answer("Не удалось обработать (уже обработано?).")
+        return
+
+    # Otherwise check escalations (existing behaviour)
     escalation = await escalations.find_pending_by_tutor_message(
         settings.state_path, replied_to_id
     )
@@ -54,4 +162,10 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
     await student_bot.send_message(student_id, message.text)
     await escalations.resolve(settings.state_path, booking_id, message.text)
     await message.answer(templates.tutor_answer_sent())
-    logger.info("Tutor reply routed: booking=%s → student=%s", booking_id, student_id)
+    logger.info("Tutor reply routed: booking=%s -> student=%s", booking_id, student_id)
+    await audit_log(
+        "escalation", "resolved",
+        booking_id=booking_id,
+        actor="tutor",
+        detail={"via": "telegram"},
+    )

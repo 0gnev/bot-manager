@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from bridge.prompts.loader import render_prompt
+
 
 def fmt_dt(dt: datetime | None) -> str:
     if dt is None:
@@ -14,14 +16,14 @@ def fmt_dt(dt: datetime | None) -> str:
     return dt.strftime("%d %b %Y, %H:%M")
 
 
-# ── Student messages ──────────────────────────────────────────────────────────
+# -- Student messages ----------------------------------------------------------
 
 def welcome(student_name: str, event_title: str, start_time: datetime | None) -> str:
-    return (
-        f"Привет, <b>{student_name}</b>! 👋\n\n"
-        f"Ваша запись подтверждена: <b>{event_title}</b>\n"
-        f"Дата и время: <b>{fmt_dt(start_time)}</b>\n\n"
-        "Здесь вы можете задать вопросы и получить всё необходимое перед занятием."
+    return render_prompt(
+        "welcome",
+        student_name=student_name,
+        event_title=event_title,
+        start_time=fmt_dt(start_time),
     )
 
 
@@ -94,7 +96,7 @@ def image_received() -> str:
     return "Изображение получено, обрабатываю…"
 
 
-# ── Tutor (escalation) messages ───────────────────────────────────────────────
+# -- Tutor (escalation) messages -----------------------------------------------
 
 def escalation_notice(
     student_name: str,
@@ -103,14 +105,13 @@ def escalation_notice(
     event_title: str,
     start_time: datetime | None,
 ) -> str:
-    return (
-        f"<b>Вопрос от студента</b>\n"
-        f"Студент: {student_name}\n"
-        f"Занятие: {event_title} ({fmt_dt(start_time)})\n"
-        f"ID брони: <code>{booking_id}</code>\n\n"
-        f"{question}\n\n"
-        "<i>Чтобы ответить, отправьте команду:</i>\n"
-        f"<code>/reply {booking_id} Ваш ответ</code>"
+    return render_prompt(
+        "escalation_notice",
+        student_name=student_name,
+        booking_id=booking_id,
+        question=question,
+        event_title=event_title,
+        start_time=fmt_dt(start_time),
     )
 
 

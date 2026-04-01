@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     state_path: str = "/workspace/data/state"
     uploads_path: str = "/workspace/data/uploads"
     knowledge_path: str = "/workspace/data/knowledge"
+    audit_path: str = "/workspace/data/audit"
 
     # ── Server ────────────────────────────────────────────────────────────────
     host: str = "0.0.0.0"
