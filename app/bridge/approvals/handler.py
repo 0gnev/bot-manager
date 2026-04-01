@@ -13,7 +13,8 @@ import logging
 from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.config import Settings
-from bridge.state import approvals, conversations
+from bridge.delivery import send_student_message
+from bridge.state import approvals
 from telegram_adapter import templates
 
 logger = logging.getLogger(__name__)
@@ -99,12 +100,18 @@ async def approve(approval_id: str, settings: Settings) -> bool:
         return False
 
     content = data["draft_content"]
-    await student_bot.send_message(
-        data["student_chat_id"], templates.answer(content),
+    sent = await send_student_message(
+        bot=student_bot,
+        chat_id=data["student_chat_id"],
+        text=templates.answer(content),
+        booking_id=data["booking_id"],
+        settings=settings,
+        source="approval_approved",
+        actor="tutor",
     )
-    await conversations.append(
-        settings.state_path, data["booking_id"], "assistant", content,
-    )
+    if not sent:
+        return False
+
     await approvals.resolve_approval(settings.state_path, approval_id, "approved")
 
     await audit_log(
@@ -148,12 +155,18 @@ async def edit_and_approve(
         logger.error("Student bot not available")
         return False
 
-    await student_bot.send_message(
-        data["student_chat_id"], templates.answer(new_content),
+    sent = await send_student_message(
+        bot=student_bot,
+        chat_id=data["student_chat_id"],
+        text=templates.answer(new_content),
+        booking_id=data["booking_id"],
+        settings=settings,
+        source="approval_edited",
+        actor="tutor",
     )
-    await conversations.append(
-        settings.state_path, data["booking_id"], "assistant", new_content,
-    )
+    if not sent:
+        return False
+
     await approvals.resolve_approval(
         settings.state_path, approval_id, "edited", final_content=new_content,
     )

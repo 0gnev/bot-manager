@@ -17,6 +17,7 @@ from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.clients.openclaw import OpenclawClient
 from bridge.config import Settings
+from bridge.delivery import send_student_message
 from bridge.escalation.handler import escalate
 from bridge.policies import evaluate_ai_response
 from bridge.state import bookings, conversations, OperatingMode
@@ -59,11 +60,25 @@ async def _handle_ai_response(
     if action == "escalate":
         await escalate(message, booking, content, settings)
     elif action == "clarify":
-        await message.answer(templates.clarify(content))
-        await conversations.append(settings.state_path, booking_id, "assistant", content)
+        await send_student_message(
+            bot=message.bot,
+            chat_id=message.chat.id,
+            text=templates.clarify(content),
+            booking_id=booking_id,
+            settings=settings,
+            source="ai_clarify",
+            actor="system",
+        )
     else:
-        await message.answer(templates.answer(content))
-        await conversations.append(settings.state_path, booking_id, "assistant", content)
+        await send_student_message(
+            bot=message.bot,
+            chat_id=message.chat.id,
+            text=templates.answer(content),
+            booking_id=booking_id,
+            settings=settings,
+            source="ai_answer",
+            actor="system",
+        )
 
 
 async def _handle_semi_auto(
