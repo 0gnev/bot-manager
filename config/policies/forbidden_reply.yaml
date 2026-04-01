@@ -1,0 +1,16 @@
+# Reply patterns that must never be auto-sent by the bot.
+
+patterns:
+  discount_promise:
+    - "скидк"
+    - "discount"
+  payment_confirmation:
+    - "подтверждаю оплат"
+    - "оплата подтвержд"
+    - "платеж подтвержд"
+    - "платёж подтвержд"
+  learning_terms_change:
+    - "изменим условия"
+    - "меняем условия"
+    - "изменили условия"
+    - "пересмотрим условия"
