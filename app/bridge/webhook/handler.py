@@ -14,7 +14,7 @@ from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.config import Settings
 from bridge.delivery import send_student_message
-from bridge.state import bookings
+from bridge.state import bookings, conversations
 from telegram_adapter import templates
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,16 @@ async def _on_created(
     }
 
     await bookings.save(settings.state_path, booking_id, data)
+    await conversations.update_metadata(
+        settings.state_path,
+        booking_id,
+        scenario_type="booking_onboarding",
+        current_stage="booking_created",
+        status="active",
+        automation_enabled=True,
+        escalation_state="none",
+        escalation_reason=None,
+    )
     logger.info("Booking created: %s | attendee=%s", booking_id, attendee and attendee.name)
     await audit_log(
         "booking", "created",

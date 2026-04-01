@@ -14,7 +14,7 @@ from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.config import Settings
 from bridge.delivery import send_student_message
-from bridge.state import approvals
+from bridge.state import approvals, conversations
 from telegram_adapter import templates
 
 logger = logging.getLogger(__name__)
@@ -74,6 +74,13 @@ async def submit_for_approval(
         settings.state_path, data["approval_id"], sent.message_id,
     )
     data["tutor_message_id"] = sent.message_id
+    await conversations.update_metadata(
+        settings.state_path,
+        booking_id,
+        current_stage="awaiting_approval",
+        status="pending_review",
+        confidence=confidence,
+    )
 
     await audit_log(
         "approval", "submitted",
@@ -112,7 +119,22 @@ async def approve(approval_id: str, settings: Settings) -> bool:
     if not sent:
         return False
 
-    await approvals.resolve_approval(settings.state_path, approval_id, "approved")
+    await approvals.resolve_approval(
+        settings.state_path,
+        approval_id,
+        "approved",
+        reviewer="tutor",
+        review_channel="api",
+    )
+    await conversations.update_metadata(
+        settings.state_path,
+        data["booking_id"],
+        current_stage="approved_reply_sent",
+        status="active",
+        confidence=data.get("confidence"),
+        escalation_state="none",
+        escalation_reason=None,
+    )
 
     await audit_log(
         "approval", "approved",
@@ -130,7 +152,20 @@ async def reject(approval_id: str, settings: Settings) -> bool:
     if not data or data["status"] != "pending":
         return False
 
-    await approvals.resolve_approval(settings.state_path, approval_id, "rejected")
+    await approvals.resolve_approval(
+        settings.state_path,
+        approval_id,
+        "rejected",
+        reviewer="tutor",
+        review_channel="api",
+    )
+    await conversations.update_metadata(
+        settings.state_path,
+        data["booking_id"],
+        current_stage="approval_rejected",
+        status="pending_review",
+        confidence=data.get("confidence"),
+    )
 
     await audit_log(
         "approval", "rejected",
@@ -168,7 +203,21 @@ async def edit_and_approve(
         return False
 
     await approvals.resolve_approval(
-        settings.state_path, approval_id, "edited", final_content=new_content,
+        settings.state_path,
+        approval_id,
+        "edited",
+        final_content=new_content,
+        reviewer="tutor",
+        review_channel="api",
+    )
+    await conversations.update_metadata(
+        settings.state_path,
+        data["booking_id"],
+        current_stage="edited_reply_sent",
+        status="active",
+        confidence=data.get("confidence"),
+        escalation_state="none",
+        escalation_reason=None,
     )
 
     await audit_log(

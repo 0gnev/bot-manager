@@ -127,6 +127,7 @@ async def _apply_policy_result(
 ) -> None:
     tutor_available = bool(getattr(settings, "tutor_chat_id", None))
     chat = await conversations.load_chat(settings.state_path, booking_id)
+    confidence = response.get("confidence")
     decision = evaluate_ai_response(
         response=response,
         booking=booking,
@@ -146,6 +147,12 @@ async def _apply_policy_result(
             "action": response.get("action"),
             "confidence": response.get("confidence"),
         },
+    )
+    await conversations.update_metadata(
+        settings.state_path,
+        booking_id,
+        confidence=confidence,
+        current_stage=f"policy_{decision.route}",
     )
 
     if decision.route == "send":
@@ -215,6 +222,13 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
 
     chat = await conversations.load_chat(settings.state_path, booking_id)
     mode = chat.mode
+    await conversations.update_metadata(
+        settings.state_path,
+        booking_id,
+        scenario_type="student_dialogue",
+        current_stage="student_message_received",
+        status="manual_takeover" if mode == OperatingMode.MANUAL else "active",
+    )
 
     if mode == OperatingMode.MANUAL:
         await _handle_manual(message, booking, settings, booking_id, text)
@@ -275,6 +289,13 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
 
     chat = await conversations.load_chat(settings.state_path, booking_id)
     mode = chat.mode
+    await conversations.update_metadata(
+        settings.state_path,
+        booking_id,
+        scenario_type="student_dialogue",
+        current_stage="student_image_received",
+        status="manual_takeover" if mode == OperatingMode.MANUAL else "active",
+    )
 
     if mode == OperatingMode.MANUAL:
         await _handle_manual(

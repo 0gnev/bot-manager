@@ -13,7 +13,7 @@ from aiogram.types import Message
 from bridge.audit import audit_log
 from bridge.config import Settings
 from bridge.delivery import send_student_message
-from bridge.state import bookings
+from bridge.state import bookings, conversations
 from telegram_adapter.deeplink import parse_start_payload
 from telegram_adapter import templates
 
@@ -68,6 +68,13 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
 
     booking = await bookings.link_telegram_user(
         settings.state_path, booking_id, message.from_user.id
+    )
+    await conversations.update_metadata(
+        settings.state_path,
+        booking_id,
+        current_stage="student_linked",
+        status="active",
+        automation_enabled=True,
     )
 
     start_time = _parse_dt(booking.get("start_time"))

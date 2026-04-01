@@ -57,6 +57,8 @@ async def create_approval(
         "action": action,
         "confidence": confidence,
         "status": "pending",
+        "reviewer": None,
+        "review_channel": "api",
         "tutor_message_id": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "resolved_at": None,
@@ -79,6 +81,8 @@ async def resolve_approval(
     approval_id: str,
     status: str,
     final_content: str | None = None,
+    reviewer: str | None = None,
+    review_channel: str | None = None,
 ) -> dict | None:
     data = await get_approval(state_path, approval_id)
     if data is None:
@@ -86,6 +90,10 @@ async def resolve_approval(
     data["status"] = status
     if final_content is not None:
         data["draft_content"] = final_content
+    if reviewer is not None:
+        data["reviewer"] = reviewer
+    if review_channel is not None:
+        data["review_channel"] = review_channel
     data["resolved_at"] = datetime.now(timezone.utc).isoformat()
     await _write(_approval_path(state_path, approval_id), data)
     logger.info("Resolved approval %s -> %s", approval_id, status)

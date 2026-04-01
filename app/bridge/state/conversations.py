@@ -54,6 +54,20 @@ async def save_chat(state_path: str, chat: Chat) -> None:
     )
 
 
+async def update_metadata(
+    state_path: str,
+    booking_id: str,
+    **fields,
+) -> Chat:
+    """Update one or more chat metadata fields and persist the result."""
+    chat = await load_chat(state_path, booking_id)
+    for key, value in fields.items():
+        if hasattr(chat, key):
+            setattr(chat, key, value)
+    await save_chat(state_path, chat)
+    return chat
+
+
 async def load(state_path: str, booking_id: str) -> list[dict]:
     """Load just the messages list (backward-compatible convenience)."""
     chat = await load_chat(state_path, booking_id)
