@@ -4,7 +4,8 @@ Bridge entrypoint.
 Runs two concurrent tasks in a single process:
   1. FastAPI (uvicorn) — listens for Planerka webhooks on :8081
   2. aiogram polling    — polls Telegram for the student bot only
-                          (tutor bot is managed by OpenClaw)
+                          (tutor bot is managed by OpenClaw; tutor actions
+                          are handled through the REST API)
 """
 
 from __future__ import annotations

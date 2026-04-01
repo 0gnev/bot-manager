@@ -1,4 +1,8 @@
 # Confidence scoring rules.
 
+auto_send_min_confidence: 0.85
+clarify_send_min_confidence: 0.75
+approval_fallback_min_confidence: 0.4
+
 rules:
   - If unsure, escalate to the tutor rather than guessing.

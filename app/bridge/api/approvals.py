@@ -2,9 +2,11 @@
 REST API for approval queue.
 
 Endpoints:
-  GET  /api/approvals?status=pending  — list approvals (default: pending)
-  POST /api/approvals/{id}/approve    — approve a draft
-  POST /api/approvals/{id}/reject     — reject a draft
+  GET  /api/approvals?status=pending      — list approvals (default: pending)
+  GET  /api/approvals/{id}                — get one approval
+  POST /api/approvals/{id}/approve        — approve a draft
+  POST /api/approvals/{id}/reject         — reject a draft
+  POST /api/approvals/{id}/edit-approve   — edit and approve a draft
 
 Auth: Bearer token (tutor_api_token; falls back to gateway_auth_token).
 """
@@ -14,6 +16,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from pydantic import BaseModel
 
 from bridge.approvals import handler as approval_handler
 from bridge.config import Settings, get_settings
@@ -41,6 +44,10 @@ def _verify_token(
 
 
 # -- Endpoints -----------------------------------------------------------------
+
+
+class EditApprovalRequest(BaseModel):
+    text: str
 
 
 @router.get(
@@ -76,6 +83,21 @@ async def list_approvals(
         except Exception:
             continue
     return results
+
+
+@router.get(
+    "/{approval_id}",
+    dependencies=[Depends(_verify_token)],
+)
+async def get_approval(
+    approval_id: str,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Return one approval by ID."""
+    data = await approvals.get_approval(settings.state_path, approval_id)
+    if not data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Approval not found")
+    return data
 
 
 @router.post(
@@ -120,3 +142,29 @@ async def reject_endpoint(
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to reject")
 
     return {"ok": True, "approval_id": approval_id, "status": "rejected"}
+
+
+@router.post(
+    "/{approval_id}/edit-approve",
+    dependencies=[Depends(_verify_token)],
+)
+async def edit_approve_endpoint(
+    approval_id: str,
+    body: EditApprovalRequest,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Edit a pending draft and send the edited version to the student."""
+    data = await approvals.get_approval(settings.state_path, approval_id)
+    if not data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Approval not found")
+    if data.get("status") != "pending":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Approval already resolved")
+
+    ok = await approval_handler.edit_and_approve(approval_id, body.text, settings)
+    if not ok:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to edit and approve",
+        )
+
+    return {"ok": True, "approval_id": approval_id, "status": "edited"}
