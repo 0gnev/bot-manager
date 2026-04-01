@@ -5,5 +5,7 @@ ID брони: <code>{{booking_id}}</code>
 
 {{question}}
 
-<i>Чтобы ответить, отправьте команду:</i>
-<code>/reply {{booking_id}} Ваш ответ</code>
+<i>Telegram-уведомление только для просмотра.</i>
+<i>Ответ отправляйте через REST API Bot Manager:</i>
+<code>POST /api/tutor/reply</code>
+<i>Передайте booking_id=<code>{{booking_id}}</code> и текст ответа.</i>
