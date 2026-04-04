@@ -20,7 +20,7 @@ from bridge.config import Settings
 from bridge.delivery import send_student_message
 from bridge.escalation.handler import escalate
 from bridge.policies import evaluate_ai_response
-from bridge.state import bookings, conversations, load_controls, OperatingMode
+from bridge.state import bookings, conversations, escalations, load_controls, OperatingMode
 from obsidian_adapter.reader import search as knowledge_search
 from telegram_adapter import templates
 
@@ -30,20 +30,21 @@ router = Router(name="messages")
 
 # -- Helpers -------------------------------------------------------------------
 
-async def _notify_tutor(settings: Settings, booking_id: str, text: str) -> None:
+async def _notify_tutor(settings: Settings, booking_id: str, text: str):
     """Send a notification to the tutor via the owner bot."""
     tutor_chat_id = getattr(settings, "tutor_chat_id", None)
     if not tutor_chat_id:
         logger.warning("TUTOR_CHAT_ID not set; cannot notify tutor")
-        return
+        return None
     owner_bot = registry.get_owner()
     if owner_bot is None:
         logger.error("Owner bot not available for tutor notification")
-        return
+        return None
     try:
-        await owner_bot.send_message(int(tutor_chat_id), text)
+        return await owner_bot.send_message(int(tutor_chat_id), text)
     except Exception as exc:
         logger.error("Failed to notify tutor: %s", exc)
+        return None
 
 
 async def _handle_ai_response(
@@ -183,6 +184,7 @@ async def _handle_manual(
 ) -> None:
     """In manual mode: acknowledge and forward to tutor."""
     await message.answer("Ваш преподаватель ответит в ближайшее время.")
+    tutor_chat_id = getattr(settings, "tutor_chat_id", None)
 
     attendee = booking.get("attendee") or {}
     student_name = attendee.get("name", "Студент")
@@ -192,7 +194,30 @@ async def _handle_manual(
         f"ID брони: <code>{booking_id}</code>\n\n"
         f"{student_text}"
     )
-    await _notify_tutor(settings, booking_id, notice)
+    sent = await _notify_tutor(settings, booking_id, notice)
+    if sent is None:
+        return
+
+    reason = {
+        "global-stop": "global_automation_disabled",
+        "chat-stop": "chat_automation_disabled",
+        "manual": "manual_mode",
+    }.get(context_label, "human_review_required")
+
+    await escalations.create(
+        settings.state_path,
+        booking_id,
+        question=student_text,
+        tutor_message_id=sent.message_id,
+        reason=reason,
+    )
+    await conversations.update_metadata(
+        settings.state_path,
+        booking_id,
+        escalation_state="pending",
+        escalation_reason=reason,
+        assigned_human=str(tutor_chat_id) if tutor_chat_id else None,
+    )
 
 
 # -- Text messages -------------------------------------------------------------
