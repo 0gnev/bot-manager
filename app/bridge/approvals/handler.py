@@ -25,12 +25,10 @@ def _format_approval_notice(data: dict) -> str:
     confidence_pct = int(data["confidence"] * 100)
     return (
         f"<b>Черновик для проверки</b>\n"
-        f"Approval ID: <code>{data['approval_id']}</code>\n"
-        f"Тип: {action_label} (уверенность: {confidence_pct}%)\n"
-        f"Бронь: <code>{data['booking_id']}</code>\n\n"
-        f"{data['draft_content']}\n\n"
-        "<i>Дальнейшие действия выполняются через REST API "
-        "(`/api/approvals` и `/api/tutor`).</i>"
+        f"<b>Тип:</b> {action_label} (уверенность: {confidence_pct}%)\n"
+        f"<b>ID брони:</b> <code>{data['booking_id']}</code>\n\n"
+        f"<b>Текст черновика:</b>\n"
+        f"{data['draft_content']}"
     )
 
 
