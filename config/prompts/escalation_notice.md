@@ -1,11 +1,8 @@
-<b>Вопрос от студента</b>
-Студент: {{student_name}}
-Занятие: {{event_title}} ({{start_time}})
-ID брони: <code>{{booking_id}}</code>
+<b>Новое сообщение от студента</b>
 
+<b>Студент:</b> {{student_name}}
+<b>Занятие:</b> {{event_title}} ({{start_time}})
+<b>ID брони:</b> <code>{{booking_id}}</code>
+
+<b>Сообщение студента:</b>
 {{question}}
-
-<i>Telegram-уведомление только для просмотра.</i>
-<i>Ответ отправляйте через REST API Bot Manager:</i>
-<code>POST /api/tutor/reply</code>
-<i>Передайте booking_id=<code>{{booking_id}}</code> и текст ответа.</i>
