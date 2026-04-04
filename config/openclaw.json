@@ -30,7 +30,7 @@
   },
   "channels": {
     "telegram": {
-      "enabled": true,
+      "enabled": false,
       "dmPolicy": "allowlist",
       "botToken": "${TELEGRAM_BOT_TOKEN_OWNER}",
       "allowFrom": ["tg:${TUTOR_CHAT_ID}"],

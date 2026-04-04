@@ -4,14 +4,12 @@ Bot and Dispatcher setup.
 Two bots, one Dispatcher:
   - bot_student  (TOKEN_STUDENT) — open to all users, polled by Bridge
   - bot_owner    (TOKEN_OWNER)   — restricted to tutor whitelist,
-                                   polled by OpenClaw; Bridge only sends
-                                   escalation notices through it
+                                   polled by Bridge for tutor/operator actions
 
 RoleMiddleware injects `role` into every handler based on which bot
 received the update. Settings is injected via workflow_data.
 
-Only student-facing Telegram handlers are mounted here. Tutor/admin control
-is handled via the REST API because the owner bot is managed by OpenClaw.
+Both student and tutor-facing Telegram handlers are mounted here.
 """
 
 from __future__ import annotations
@@ -22,17 +20,22 @@ from aiogram.enums import ParseMode
 
 from bridge.bot import registry
 from bridge.bot.middleware import IdempotencyMiddleware, RoleMiddleware
-from bridge.bot.handlers import start, messages
+from bridge.bot.handlers import start, messages, tutor
 from bridge.config import Settings
 
 
-def create_bots_and_dispatcher(settings: Settings) -> tuple[Bot, Dispatcher]:
+def create_bots_and_dispatcher(settings: Settings) -> tuple[Bot, Bot | None, Dispatcher]:
     defaults = DefaultBotProperties(parse_mode=ParseMode.HTML)
     bot_student = Bot(token=settings.telegram_bot_token_student, default=defaults)
+    bot_owner = None
+    if settings.telegram_bot_token_owner:
+        bot_owner = Bot(token=settings.telegram_bot_token_owner, default=defaults)
 
-    # Owner bot is created lazily by registry on first use (to avoid
-    # conflicting with OpenClaw's polling of the same token).
-    registry.register(bot_student, settings.telegram_bot_token_owner or None)
+    registry.register(
+        bot_student,
+        settings.telegram_bot_token_owner or None,
+        owner_bot=bot_owner,
+    )
 
     dp = Dispatcher()
     dp.workflow_data["settings"] = settings
@@ -41,5 +44,6 @@ def create_bots_and_dispatcher(settings: Settings) -> tuple[Bot, Dispatcher]:
 
     dp.include_router(start.router)
     dp.include_router(messages.router)
+    dp.include_router(tutor.router)
 
-    return bot_student, dp
+    return bot_student, bot_owner, dp

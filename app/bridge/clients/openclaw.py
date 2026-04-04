@@ -75,6 +75,32 @@ class OpenclawClient:
         messages.append({"role": "user", "content": content})
         return await self._complete(messages)
 
+    async def tutor_assistant(
+        self,
+        message: str,
+        knowledge: list[dict] | None = None,
+    ) -> str:
+        knowledge_section = ""
+        if knowledge:
+            chunks = []
+            for doc in knowledge:
+                chunks.append(f"### {doc['title']}\n{doc['content']}")
+            knowledge_section = (
+                "\nРелевантные материалы из базы знаний:\n"
+                + "\n---\n".join(chunks)
+                + "\n"
+            )
+
+        system = render_prompt(
+            "tutor_assistant",
+            knowledge_section=knowledge_section,
+        )
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": message},
+        ]
+        return await self._complete_text(messages)
+
     # -- Internals -------------------------------------------------------------
 
     def _build_messages(
@@ -149,6 +175,34 @@ class OpenclawClient:
             logger.error("Openclaw unreachable: %s", exc)
             await audit_log("ai", "response_received", actor="system", outcome="failure", detail={"error": str(exc)[:200]})
             return _fallback()
+
+    async def _complete_text(self, messages: list[dict]) -> str:
+        payload = {"model": "default", "messages": messages}
+        url = f"{self._base_url}/v1/chat/completions"
+        await audit_log("ai", "call_made", actor="system", detail={"url": url, "mode": "tutor_assistant"})
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                resp = await client.post(url, json=payload, headers=self._headers)
+                resp.raise_for_status()
+                raw = resp.json()["choices"][0]["message"]["content"]
+                text = raw.strip() if isinstance(raw, str) else str(raw)
+                await audit_log(
+                    "ai",
+                    "response_received",
+                    actor="system",
+                    detail={"mode": "tutor_assistant"},
+                )
+                return text or "Не удалось подготовить ответ."
+        except Exception as exc:
+            logger.error("Openclaw tutor assistant failed: %s", exc)
+            await audit_log(
+                "ai",
+                "response_received",
+                actor="system",
+                outcome="failure",
+                detail={"mode": "tutor_assistant", "error": str(exc)[:200]},
+            )
+            return "Не удалось сейчас ответить по базе знаний. Попробуйте переформулировать запрос."
 
 
 def _sanitize_booking(booking: dict) -> dict:

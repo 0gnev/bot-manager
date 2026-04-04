@@ -22,8 +22,11 @@ from aiogram.types import CallbackQuery, Message
 from bridge.approvals import handler as approval_handler
 from bridge.audit import audit_log
 from bridge.bot import registry
+from bridge.clients.openclaw import OpenclawClient
 from bridge.config import Settings
+from bridge.delivery import send_student_message
 from bridge.state import approvals, bookings, conversations, escalations, OperatingMode
+from obsidian_adapter.reader import search as knowledge_search
 from telegram_adapter import templates
 
 logger = logging.getLogger(__name__)
@@ -159,8 +162,35 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         await message.answer("Ошибка: не удалось отправить ответ студенту.")
         return
 
-    await student_bot.send_message(student_id, message.text)
-    await escalations.resolve(settings.state_path, booking_id, message.text)
+    sent = await send_student_message(
+        bot=student_bot,
+        chat_id=student_id,
+        text=message.text,
+        booking_id=booking_id,
+        settings=settings,
+        source="tutor_telegram_reply",
+        actor="tutor",
+    )
+    if not sent:
+        await message.answer("Ошибка: не удалось отправить ответ студенту.")
+        return
+
+    await escalations.resolve(
+        settings.state_path,
+        booking_id,
+        message.text,
+        resolved_by="tutor",
+    )
+    await conversations.update_metadata(
+        settings.state_path,
+        booking_id,
+        escalation_state="resolved",
+        escalation_reason=None,
+        current_stage="tutor_reply_sent",
+        status="active",
+        assigned_human="tutor",
+        automation_enabled=False,
+    )
     await message.answer(templates.tutor_answer_sent())
     logger.info("Tutor reply routed: booking=%s -> student=%s", booking_id, student_id)
     await audit_log(
@@ -169,3 +199,18 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         actor="tutor",
         detail={"via": "telegram"},
     )
+
+
+@router.message(F.text)
+async def on_tutor_message(message: Message, role: str, settings: Settings) -> None:
+    if role != "tutor":
+        return
+    if message.reply_to_message:
+        return
+    if (message.text or "").startswith("/"):
+        return
+
+    knowledge = await knowledge_search(settings.knowledge_path, message.text, limit=5)
+    client = OpenclawClient(settings)
+    reply = await client.tutor_assistant(message.text, knowledge=knowledge)
+    await message.answer(reply, disable_web_page_preview=True)
