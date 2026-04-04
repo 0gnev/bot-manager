@@ -126,12 +126,22 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         return
 
     replied_to_id = message.reply_to_message.message_id
+    logger.info(
+        "Tutor reply received: reply_to_message_id=%s text=%r",
+        replied_to_id,
+        (message.text or "")[:200],
+    )
 
     # Check if this is a reply to an approval message (edit & approve)
     approval = await approvals.find_pending_by_tutor_message(
         settings.state_path, replied_to_id,
     )
     if approval:
+        logger.info(
+            "Tutor reply matched approval: approval_id=%s booking=%s",
+            approval["approval_id"],
+            approval["booking_id"],
+        )
         ok = await approval_handler.edit_and_approve(
             approval["approval_id"], message.text, settings,
         )
@@ -148,6 +158,10 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
     if not escalation:
         booking_id = _extract_booking_id_from_message(message.reply_to_message)
         if booking_id:
+            logger.info(
+                "Tutor reply fallback by booking_id from message text: booking=%s",
+                booking_id,
+            )
             loaded = await escalations.load(settings.state_path, booking_id)
             if loaded and loaded.get("status") == "pending":
                 escalation = loaded
@@ -159,6 +173,12 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         )
         return  # not an escalation reply
 
+    logger.info(
+        "Tutor reply matched escalation: booking=%s tutor_message_id=%s",
+        escalation["booking_id"],
+        escalation.get("tutor_message_id"),
+    )
+
     booking_id = escalation["booking_id"]
     booking = await bookings.load(settings.state_path, booking_id)
     if not booking:
@@ -167,6 +187,7 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
 
     student_id = booking.get("telegram_user_id")
     if not student_id:
+        logger.warning("Tutor reply blocked: booking=%s has no telegram_user_id", booking_id)
         await message.answer("Студент ещё не подключился через deeplink.")
         return
 
@@ -186,6 +207,7 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         actor="tutor",
     )
     if not sent:
+        logger.error("Tutor reply delivery failed: booking=%s student_id=%s", booking_id, student_id)
         await message.answer("Ошибка: не удалось отправить ответ студенту.")
         return
 
