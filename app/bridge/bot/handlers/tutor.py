@@ -14,6 +14,7 @@ Additional features:
 from __future__ import annotations
 
 import logging
+import re
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -31,6 +32,8 @@ from telegram_adapter import templates
 
 logger = logging.getLogger(__name__)
 router = Router(name="tutor")
+
+_BOOKING_ID_RE = re.compile(r"ID брони:\s*(?:<code>)?([A-Za-z0-9_-]+)")
 
 
 # -- /mode command -------------------------------------------------------------
@@ -143,6 +146,17 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         settings.state_path, replied_to_id
     )
     if not escalation:
+        booking_id = _extract_booking_id_from_message(message.reply_to_message)
+        if booking_id:
+            loaded = await escalations.load(settings.state_path, booking_id)
+            if loaded and loaded.get("status") == "pending":
+                escalation = loaded
+    if not escalation:
+        logger.warning(
+            "Tutor reply did not match pending escalation: reply_to_message_id=%s text=%r",
+            replied_to_id,
+            (message.reply_to_message.text or message.reply_to_message.html_text or "")[:200],
+        )
         return  # not an escalation reply
 
     booking_id = escalation["booking_id"]
@@ -214,3 +228,20 @@ async def on_tutor_message(message: Message, role: str, settings: Settings) -> N
     client = OpenclawClient(settings)
     reply = await client.tutor_assistant(message.text, knowledge=knowledge)
     await message.answer(reply, disable_web_page_preview=True)
+
+
+def _extract_booking_id_from_message(message: Message | None) -> str | None:
+    if message is None:
+        return None
+    candidates = [
+        getattr(message, "html_text", None),
+        getattr(message, "text", None),
+        getattr(message, "caption", None),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        match = _BOOKING_ID_RE.search(candidate)
+        if match:
+            return match.group(1)
+    return None
