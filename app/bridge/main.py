@@ -3,9 +3,7 @@ Bridge entrypoint.
 
 Runs two concurrent tasks in a single process:
   1. FastAPI (uvicorn) — listens for Planerka webhooks on :8081
-  2. aiogram polling    — polls Telegram for the student bot only
-                          (tutor bot is managed by OpenClaw; tutor actions
-                          are handled through the REST API)
+  2. aiogram polling    — polls Telegram for the student and tutor bots
 """
 
 from __future__ import annotations
@@ -49,15 +47,24 @@ def create_app() -> FastAPI:
 async def run_polling(settings) -> None:
     from bridge.bot.setup import create_bots_and_dispatcher
 
-    bot_student, dp = create_bots_and_dispatcher(settings)
-    logger.info("Starting Telegram polling (student bot only; tutor bot managed by OpenClaw)")
+    bot_student, bot_owner, dp = create_bots_and_dispatcher(settings)
+    bots = [bot_student]
+    if bot_owner is not None:
+        bots.append(bot_owner)
+
+    logger.info(
+        "Starting Telegram polling (%s)",
+        "student + tutor bots" if bot_owner is not None else "student bot only",
+    )
     try:
         await dp.start_polling(
-            bot_student,
+            *bots,
             allowed_updates=dp.resolve_used_update_types(),
         )
     finally:
         await bot_student.session.close()
+        if bot_owner is not None:
+            await bot_owner.session.close()
 
 
 async def run_server(app: FastAPI, settings) -> None:

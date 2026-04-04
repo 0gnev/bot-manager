@@ -28,7 +28,8 @@ def _format_approval_notice(data: dict) -> str:
         f"<b>Тип:</b> {action_label} (уверенность: {confidence_pct}%)\n"
         f"<b>ID брони:</b> <code>{data['booking_id']}</code>\n\n"
         f"<b>Текст черновика:</b>\n"
-        f"{data['draft_content']}"
+        f"{data['draft_content']}\n\n"
+        "<i>Если нужно исправить текст, ответьте на это сообщение своим вариантом.</i>"
     )
 
 

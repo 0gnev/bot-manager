@@ -48,7 +48,9 @@ class IdempotencyMiddleware(BaseMiddleware):
         if update is None or not hasattr(update, "update_id"):
             return await handler(event, data)
 
-        key = f"tg:{update.update_id}"
+        bot = data.get("bot")
+        bot_key = getattr(bot, "id", "unknown")
+        key = f"tg:{bot_key}:{update.update_id}"
         if await begin_processing(key):
             logger.debug("Duplicate Telegram update ignored: %s", update.update_id)
             return None

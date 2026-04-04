@@ -11,7 +11,7 @@
       "owner": {
         "env": "TELEGRAM_BOT_TOKEN_OWNER",
         "access": "whitelist",
-        "purpose": "Tutor/owner bot, polled by OpenClaw, Bridge sends escalations"
+        "purpose": "Tutor/owner bot, polled by Bridge for operator actions"
       }
     }
   },
