@@ -10,6 +10,10 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
+# Allow deployments even when the repo is accessed under a different login
+# than the original owner of the working tree.
+git config --global --add safe.directory "$(pwd)"
+
 git fetch --all --prune
 
 if git show-ref --verify --quiet "refs/heads/${REF}"; then
@@ -33,5 +37,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements-dev.txt
 python -m pytest
 
-docker compose --env-file .env up -d --build
+# Bind-mounted app/config files do not always trigger container recreation.
+# Force a recreate so the running bot process always picks up the latest code.
+docker compose --env-file .env up -d --build --force-recreate
 docker compose --env-file .env ps
