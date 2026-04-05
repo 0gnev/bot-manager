@@ -16,3 +16,4 @@ task up
 - Bridge writes audit logs to `data/audit/`
 - config templates live in `config/`
 - GitHub Actions CI/CD setup is documented in `docs/github-actions.md`
+- full migration and backup context is documented in `docs/project-handoff.md`
