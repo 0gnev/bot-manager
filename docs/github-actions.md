@@ -30,9 +30,14 @@ That script:
 2. checks out `main`
 3. updates the Python virtualenv
 4. runs `pytest` on the server
-5. runs `docker compose --env-file .env up -d --build`
+5. runs `docker compose --env-file .env up -d --build --force-recreate`
 
-If tests fail on the server, deployment stops before containers are restarted.
+The `--force-recreate` flag is important here because `bridge` uses bind mounts for
+`app/` and `config/`. A plain `up -d --build` can leave the existing container
+running with the old Python process, while `--force-recreate` guarantees that the
+deployed code is actually picked up.
+
+If tests fail on the server, deployment stops before containers are recreated.
 
 ## Recommended GitHub environment setup
 
