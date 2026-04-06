@@ -31,7 +31,9 @@ logs/
 
 # ── service state / openclaw workspace ────────────────────────────────────────
 .openclaw/
-data/openclaw/
+data/openclaw/**
+!data/openclaw/
+!data/openclaw/.gitkeep
 *.db
 *.sqlite
 *.sqlite3
