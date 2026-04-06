@@ -7,7 +7,7 @@ instance configured in conftest.py via the ``pg_pool`` fixture.
 
 from __future__ import annotations
 
-import asyncio
+from conftest import run_async
 
 from bridge.state import approvals, bookings, conversations, escalations, load_controls, save_controls
 
@@ -62,7 +62,7 @@ def test_approval_state_persists_review_metadata(pg_pool) -> None:
         assert resolved["reviewer"] == "tutor"
         assert resolved["review_channel"] == "api"
 
-    asyncio.get_event_loop().run_until_complete(_run())
+    run_async(_run())
 
 
 # ── escalation tests ─────────────────────────────────────────────────────────
@@ -91,7 +91,7 @@ def test_escalation_state_persists_reason_and_resolver(pg_pool) -> None:
         assert resolved["status"] == "resolved"
         assert resolved["resolved_by"] == "tutor"
 
-    asyncio.get_event_loop().run_until_complete(_run())
+    run_async(_run())
 
 
 def test_multiple_escalations_per_booking(pg_pool) -> None:
@@ -110,7 +110,7 @@ def test_multiple_escalations_per_booking(pg_pool) -> None:
         assert resolved["question"] == "Q2"
         assert resolved["status"] == "resolved"
 
-    asyncio.get_event_loop().run_until_complete(_run())
+    run_async(_run())
 
 
 # ── runtime controls tests ───────────────────────────────────────────────────
@@ -132,7 +132,7 @@ def test_runtime_controls_persist_global_automation_state(pg_pool) -> None:
         assert reloaded["updated_by"] == "tutor"
         assert reloaded["reason"] == "maintenance"
 
-    asyncio.get_event_loop().run_until_complete(_run())
+    run_async(_run())
 
 
 # ── booking tests ────────────────────────────────────────────────────────────
@@ -148,7 +148,7 @@ def test_booking_save_and_load(pg_pool) -> None:
         assert loaded["status"] == "active"
         assert loaded["title"] == "Test Lesson"
 
-    asyncio.get_event_loop().run_until_complete(_run())
+    run_async(_run())
 
 
 def test_booking_link_telegram_user(pg_pool) -> None:
@@ -163,7 +163,7 @@ def test_booking_link_telegram_user(pg_pool) -> None:
         assert found is not None
         assert found["booking_id"] == "booking-link"
 
-    asyncio.get_event_loop().run_until_complete(_run())
+    run_async(_run())
 
 
 def test_booking_find_by_username(pg_pool) -> None:
@@ -174,7 +174,7 @@ def test_booking_find_by_username(pg_pool) -> None:
         assert found is not None
         assert found["booking_id"] == "booking-username"
 
-    asyncio.get_event_loop().run_until_complete(_run())
+    run_async(_run())
 
 
 # ── conversation tests ───────────────────────────────────────────────────────
@@ -192,7 +192,7 @@ def test_conversation_append_and_load(pg_pool) -> None:
         assert msgs[0]["content"] == "Hello!"
         assert msgs[1]["role"] == "assistant"
 
-    asyncio.get_event_loop().run_until_complete(_run())
+    run_async(_run())
 
 
 def test_conversation_update_metadata(pg_pool) -> None:
@@ -207,4 +207,4 @@ def test_conversation_update_metadata(pg_pool) -> None:
         assert chat.escalation_state == "pending"
         assert chat.current_stage == "escalated"
 
-    asyncio.get_event_loop().run_until_complete(_run())
+    run_async(_run())
