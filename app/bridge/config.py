@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     # Polled by OpenClaw; Bridge uses it only for sending escalation notices.
     telegram_bot_token_owner: str = ""
     telegram_mode: str = "polling"  # polling | webhook (webhook for production)
+    telegram_api_base_url: str = ""
 
     # ── Planerka ──────────────────────────────────────────────────────────────
     planerka_api_key: str        # x-auth for REST API calls

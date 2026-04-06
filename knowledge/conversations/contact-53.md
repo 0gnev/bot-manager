@@ -1,5 +1,5 @@
 ---
-booking_id: booking-conv
+booking_id: contact-53
 messages: 2
 ---
 
@@ -7,8 +7,8 @@ messages: 2
 
 ### 🧑 Студент  <small>06 Apr 2026, 07:09</small>
 
-Hello!
+Привет
 
 ### 🤖 Бот  <small>06 Apr 2026, 07:09</small>
 
-Hi there!
+Здравствуйте

@@ -1,12 +1,12 @@
 ---
 booking_id: booking-multi
-escalation_id: 3
+escalation_id: 10
 status: resolved
-created_at: 2026-04-06T07:01:51.348252+00:00
-resolved_at: 2026-04-06T07:01:51.351643+00:00
+created_at: 2026-04-06T07:02:50.610815+00:00
+resolved_at: 2026-04-06T07:02:50.613195+00:00
 ---
 
-# Эскалация — booking-multi / 3
+# Эскалация — booking-multi / 10
 
 **Статус:** ✅ resolved
 

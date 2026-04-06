@@ -17,4 +17,5 @@ task up
 - Bridge writes rotating runtime logs to `data/logs/bridge.log`
 - config templates live in `config/`
 - GitHub Actions CI/CD setup is documented in `docs/github-actions.md`
+- local and remote system-test workflow is documented in `docs/system-testing.md`
 - full migration and backup context is documented in `docs/project-handoff.md`
