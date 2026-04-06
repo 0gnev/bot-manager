@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     uploads_path: str = "/workspace/data/uploads"
     knowledge_path: str = "/workspace/data/knowledge"
     audit_path: str = "/workspace/data/audit"
+    log_path: str = "/workspace/data/logs"
+    log_level: str = "INFO"
+    log_max_bytes: int = 10 * 1024 * 1024
+    log_backup_count: int = 5
 
     # ── Server ────────────────────────────────────────────────────────────────
     host: str = "0.0.0.0"

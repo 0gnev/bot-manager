@@ -35,6 +35,7 @@ services:
       - ./data/uploads:/workspace/data/uploads
       - ./data/knowledge:/workspace/data/knowledge
       - ./data/audit:/workspace/data/audit
+      - ./data/logs:/workspace/data/logs
     ports:
       - "127.0.0.1:8081:8081"
     healthcheck:

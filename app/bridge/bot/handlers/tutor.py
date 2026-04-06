@@ -23,6 +23,7 @@ from aiogram.types import CallbackQuery, Message
 from bridge.approvals import handler as approval_handler
 from bridge.audit import audit_log
 from bridge.bot import registry
+from bridge.bot.filters import TutorBotFilter
 from bridge.clients.openclaw import OpenclawClient
 from bridge.config import Settings
 from bridge.delivery import send_student_message
@@ -38,7 +39,7 @@ _BOOKING_ID_RE = re.compile(r"ID брони:\s*(?:<code>)?([A-Za-z0-9_-]+)")
 
 # -- /mode command -------------------------------------------------------------
 
-@router.message(Command("mode"))
+@router.message(TutorBotFilter(), Command("mode"))
 async def on_mode(message: Message, role: str, settings: Settings) -> None:
     if role != "tutor":
         return
@@ -81,7 +82,7 @@ async def on_mode(message: Message, role: str, settings: Settings) -> None:
 
 # -- Approval inline-button callbacks -----------------------------------------
 
-@router.callback_query(F.data.startswith("appr:"))
+@router.callback_query(TutorBotFilter(), F.data.startswith("appr:"))
 async def on_approval_callback(
     callback: CallbackQuery, role: str, settings: Settings,
 ) -> None:
@@ -120,7 +121,7 @@ async def on_approval_callback(
 
 # -- Tutor reply-to: approval edit or escalation response ----------------------
 
-@router.message(F.text, F.reply_to_message)
+@router.message(TutorBotFilter(), F.text, F.reply_to_message)
 async def on_tutor_reply(message: Message, role: str, settings: Settings) -> None:
     if role != "tutor":
         return
@@ -257,7 +258,7 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
     )
 
 
-@router.message(F.text)
+@router.message(TutorBotFilter(), F.text)
 async def on_tutor_message(message: Message, role: str, settings: Settings) -> None:
     if role != "tutor":
         return

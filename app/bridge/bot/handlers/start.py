@@ -11,6 +11,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message
 
 from bridge.audit import audit_log
+from bridge.bot.filters import StudentBotFilter
 from bridge.config import Settings
 from bridge.delivery import send_student_message
 from bridge.state import bookings, conversations
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 router = Router(name="start")
 
 
-@router.message(CommandStart())
+@router.message(StudentBotFilter(), CommandStart())
 async def cmd_start(message: Message, role: str, settings: Settings) -> None:
     if role != "student":
         return

@@ -268,6 +268,7 @@ Important folders:
 - `data/state/conversations`
 - `data/state/escalations`
 - `data/audit`
+- `data/logs`
 - `data/knowledge`
 - `data/uploads`
 - `data/openclaw`
@@ -278,6 +279,7 @@ Operational meaning:
 - conversation state lives in `data/state/conversations`
 - pending human escalations live in `data/state/escalations`
 - audit trail is stored in `data/audit/audit.jsonl`
+- runtime bridge logs are stored in `data/logs/bridge.log` with rotation
 - OpenClaw runtime state lives in `data/openclaw`
 
 If you move environments or restore from backup, do not forget that `data/`
@@ -305,6 +307,14 @@ Expected:
 2. Confirm the tutor receives a Telegram card.
 3. Reply to that card from the tutor bot.
 4. Confirm the student receives the tutor's answer.
+
+### Runtime log access
+
+Bridge runtime logs can be read in three ways:
+
+- `docker compose --env-file .env logs -f bridge`
+- `tail -f data/logs/bridge.log`
+- authenticated API: `GET /api/logs/runtime`
 
 ### Files to inspect during debugging
 
