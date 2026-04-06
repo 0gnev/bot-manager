@@ -1,7 +1,7 @@
 """
 Escalation state — persisted in PostgreSQL.
 
-Table: escalations (supports multiple escalations per booking).
+Table: escalations (supports multiple escalations per booking/contact).
 
 Escalation lifecycle:
   pending  → tutor notified, waiting for reply
@@ -33,7 +33,9 @@ def _row_to_dict(row) -> dict:
 
 async def create(
     state_path: str,
-    booking_id: str,
+    booking_id: str | None,
+    *,
+    contact_id: int | None = None,
     question: str,
     tutor_message_id: int | None = None,
     reason: str | None = None,
@@ -41,11 +43,12 @@ async def create(
     pool = get_pool()
     row = await pool.fetchrow(
         """
-        INSERT INTO escalations (booking_id, question, tutor_message_id, reason)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO escalations (booking_id, contact_id, question, tutor_message_id, reason)
+        VALUES ($1, $2, $3, $4, $5)
         RETURNING *
         """,
         booking_id,
+        contact_id,
         question,
         tutor_message_id,
         reason,
@@ -84,8 +87,13 @@ async def load_by_id(state_path: str, escalation_id: int) -> dict | None:
     return _row_to_dict(row)
 
 
-async def list_pending(state_path: str, booking_id: str | None = None) -> list[dict]:
-    """List pending escalations, optionally scoped to one booking."""
+async def list_pending(
+    state_path: str,
+    booking_id: str | None = None,
+    *,
+    contact_id: int | None = None,
+) -> list[dict]:
+    """List pending escalations, optionally scoped to one booking or contact."""
     pool = get_pool()
     if booking_id:
         rows = await pool.fetch(
@@ -95,6 +103,15 @@ async def list_pending(state_path: str, booking_id: str | None = None) -> list[d
             ORDER BY created_at
             """,
             booking_id,
+        )
+    elif contact_id is not None:
+        rows = await pool.fetch(
+            """
+            SELECT * FROM escalations
+            WHERE contact_id = $1 AND status = 'pending'
+            ORDER BY created_at
+            """,
+            contact_id,
         )
     else:
         rows = await pool.fetch(

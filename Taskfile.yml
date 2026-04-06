@@ -80,6 +80,11 @@ tasks:
     cmds:
       - docker compose --env-file .env run --rm --no-deps bridge python /workspace/scripts/test-planerka.py
 
+  system-test-remote:
+    desc: Run remote system tests over SSH using SYSTEM_TEST_* env vars
+    cmds:
+      - bash scripts/system-test-remote.sh
+
   clean:
     desc: Remove recreatable local runtime data
     cmds:

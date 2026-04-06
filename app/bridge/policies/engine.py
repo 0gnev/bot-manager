@@ -27,7 +27,7 @@ class PolicyDecision:
 def evaluate_ai_response(
     *,
     response: dict,
-    booking: dict,
+    booking: dict | None,
     mode: OperatingMode,
     student_text: str,
     tutor_available: bool,
@@ -35,7 +35,7 @@ def evaluate_ai_response(
     """Evaluate model output against runtime policy rules."""
     policies = load_policy_set()
 
-    if (booking.get("status") or "active") != "active":
+    if booking and (booking.get("status") or "active") != "active":
         return PolicyDecision("block", "inactive_booking")
 
     action = str(response.get("action") or "answer").strip().lower()

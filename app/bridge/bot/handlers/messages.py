@@ -21,7 +21,7 @@ from bridge.config import Settings
 from bridge.delivery import send_student_message
 from bridge.escalation.handler import escalate
 from bridge.policies import evaluate_ai_response
-from bridge.state import bookings, conversations, escalations, load_controls, OperatingMode
+from bridge.state import bookings, contacts, conversations, escalations, load_controls, OperatingMode
 from obsidian_adapter.reader import search as knowledge_search
 from telegram_adapter import templates
 
@@ -50,23 +50,26 @@ async def _notify_tutor(settings: Settings, booking_id: str, text: str):
 
 async def _handle_ai_response(
     message: Message,
-    booking: dict,
+    booking: dict | None,
+    contact: dict,
     response: dict,
     settings: Settings,
-    booking_id: str,
+    booking_id: str | None,
+    contact_id: int,
 ) -> None:
     """Process an AI response in auto mode."""
     action = response.get("action", "answer")
     content = response.get("content", "")
 
     if action == "escalate":
-        await escalate(message, booking, content, settings)
+        await escalate(message, booking, contact, content, settings)
     elif action == "clarify":
         await send_student_message(
             bot=message.bot,
             chat_id=message.chat.id,
             text=templates.clarify(content),
             booking_id=booking_id,
+            contact_id=contact_id,
             settings=settings,
             source="ai_clarify",
             actor="system",
@@ -77,6 +80,7 @@ async def _handle_ai_response(
             chat_id=message.chat.id,
             text=templates.answer(content),
             booking_id=booking_id,
+            contact_id=contact_id,
             settings=settings,
             source="ai_answer",
             actor="system",
@@ -85,10 +89,13 @@ async def _handle_ai_response(
 
 async def _handle_semi_auto(
     message: Message,
-    booking: dict,
+    booking: dict | None,
+    contact: dict,
     response: dict,
     settings: Settings,
-    booking_id: str,
+    booking_id: str | None,
+    contact_id: int,
+    student_text: str,
 ) -> None:
     """In approval mode: submit draft for tutor review."""
     action = response.get("action", "answer")
@@ -97,7 +104,11 @@ async def _handle_semi_auto(
 
     # Escalations bypass draft approval
     if action == "escalate":
-        await escalate(message, booking, content, settings)
+        await escalate(message, booking, contact, student_text, settings)
+        return
+
+    if not booking_id:
+        await escalate(message, booking, contact, student_text, settings)
         return
 
     # Submit for approval via the approvals queue
@@ -110,7 +121,13 @@ async def _handle_semi_auto(
         settings=settings,
     )
     if approval is None:
-        await escalate(message, booking, content or "Требуется проверка преподавателя.", settings)
+        await escalate(
+            message,
+            booking,
+            contact,
+            student_text or content or "Требуется проверка преподавателя.",
+            settings,
+        )
         return
 
     await message.answer(
@@ -120,15 +137,21 @@ async def _handle_semi_auto(
 
 async def _apply_policy_result(
     message: Message,
-    booking: dict,
+    booking: dict | None,
+    contact: dict,
     response: dict,
     settings: Settings,
-    booking_id: str,
+    booking_id: str | None,
+    contact_id: int,
     *,
     student_text: str,
 ) -> None:
     tutor_available = bool(getattr(settings, "tutor_chat_id", None))
-    chat = await conversations.load_chat(settings.state_path, booking_id)
+    chat = await conversations.load_chat_by_contact(
+        settings.state_path,
+        contact_id,
+        booking_id=booking_id,
+    )
     confidence = response.get("confidence")
     decision = evaluate_ai_response(
         response=response,
@@ -144,6 +167,7 @@ async def _apply_policy_result(
         booking_id=booking_id,
         actor="system",
         detail={
+            "contact_id": contact_id,
             "route": decision.route,
             "reason": decision.reason,
             "action": response.get("action"),
@@ -152,23 +176,39 @@ async def _apply_policy_result(
     )
     await conversations.update_metadata(
         settings.state_path,
-        booking_id,
+        booking_id=booking_id,
+        contact_id=contact_id,
         confidence=confidence,
         current_stage=f"policy_{decision.route}",
     )
 
     if decision.route == "send":
-        await _handle_ai_response(message, booking, response, settings, booking_id)
+        await _handle_ai_response(
+            message,
+            booking,
+            contact,
+            response,
+            settings,
+            booking_id,
+            contact_id,
+        )
         return
 
     if decision.route == "approval":
-        await _handle_semi_auto(message, booking, response, settings, booking_id)
+        await _handle_semi_auto(
+            message,
+            booking,
+            contact,
+            response,
+            settings,
+            booking_id,
+            contact_id,
+            student_text,
+        )
         return
 
     if decision.route == "escalate":
-        # The tutor must receive the student's actual question, not the
-        # assistant's escalation placeholder text.
-        await escalate(message, booking, student_text, settings)
+        await escalate(message, booking, contact, student_text, settings)
         return
 
     logger.warning("Policy blocked outbound reply: booking=%s reason=%s", booking_id, decision.reason)
@@ -177,9 +217,11 @@ async def _apply_policy_result(
 
 async def _handle_manual(
     message: Message,
-    booking: dict,
+    booking: dict | None,
+    contact: dict,
     settings: Settings,
-    booking_id: str,
+    booking_id: str | None,
+    contact_id: int,
     student_text: str,
     *,
     context_label: str = "manual",
@@ -188,19 +230,19 @@ async def _handle_manual(
     await message.answer("Ваш преподаватель ответит в ближайшее время.")
     tutor_chat_id = getattr(settings, "tutor_chat_id", None)
 
-    attendee = booking.get("attendee") or {}
+    attendee = (booking or {}).get("attendee") or {}
     notice = templates.manual_escalation_notice(
         context_label=context_label,
-        student_name=attendee.get("name", "Студент"),
+        student_name=attendee.get("name") or contact.get("name") or "Студент",
         booking_id=booking_id,
         question=student_text,
-        event_title=booking.get("title", "Занятие"),
-        start_time=_parse_dt(booking.get("start_time")),
-        student_email=attendee.get("email"),
-        student_phone=attendee.get("phone"),
-        student_telegram=attendee.get("telegram"),
-        student_time_zone=attendee.get("timeZone"),
-        student_telegram_user_id=booking.get("telegram_user_id"),
+        event_title=(booking or {}).get("title"),
+        start_time=_parse_dt((booking or {}).get("start_time")),
+        student_email=attendee.get("email") or contact.get("email"),
+        student_phone=attendee.get("phone") or contact.get("phone"),
+        student_telegram=attendee.get("telegram") or contact.get("telegram_username"),
+        student_time_zone=attendee.get("timeZone") or contact.get("time_zone"),
+        student_telegram_user_id=(booking or {}).get("telegram_user_id") or contact.get("telegram_user_id"),
     )
     sent = await _notify_tutor(settings, booking_id, notice)
     if sent is None:
@@ -215,35 +257,44 @@ async def _handle_manual(
     await escalations.create(
         settings.state_path,
         booking_id,
+        contact_id=contact_id,
         question=student_text,
         tutor_message_id=sent.message_id,
         reason=reason,
     )
     await conversations.update_metadata(
         settings.state_path,
-        booking_id,
+        booking_id=booking_id,
+        contact_id=contact_id,
         escalation_state="pending",
         escalation_reason=reason,
         assigned_human=str(tutor_chat_id) if tutor_chat_id else None,
     )
 
 
-async def _resolve_booking_or_prompt(message: Message, settings: Settings) -> dict | None:
-    booking = await bookings.find_by_telegram_user(
-        settings.state_path, message.from_user.id
+async def _resolve_contact_context(message: Message, settings: Settings) -> tuple[dict, dict | None, list[dict]]:
+    contact = await contacts.ensure_telegram_contact(
+        settings.state_path,
+        message.from_user.id,
+        telegram_username=message.from_user.username,
+        name=message.from_user.full_name,
     )
-    if booking is not None:
-        return booking
-
-    linked_bookings = await bookings.find_all_by_telegram_user(
-        settings.state_path, message.from_user.id
+    booking = await bookings.resolve_context_for_contact(settings.state_path, contact["id"])
+    booking_candidates = await bookings.find_all_by_contact(
+        settings.state_path,
+        contact["id"],
+        active_only=True,
     )
-    if linked_bookings:
-        await message.answer(_multiple_bookings_notice(linked_bookings))
-        return None
+    return contact, booking, booking_candidates
 
-    await message.answer(templates.booking_not_found())
-    return None
+
+def _build_ai_context(contact: dict, booking: dict | None, booking_candidates: list[dict]) -> dict:
+    return {
+        "contact": contact,
+        "booking": booking,
+        "bookings": booking_candidates[:5],
+        "context_source": "booking" if booking else "contact_only",
+    }
 
 
 # -- Text messages -------------------------------------------------------------
@@ -253,11 +304,9 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
     if role != "student":
         return
 
-    booking = await _resolve_booking_or_prompt(message, settings)
-    if not booking:
-        return
-
-    booking_id = booking["booking_id"]
+    contact, booking, booking_candidates = await _resolve_contact_context(message, settings)
+    contact_id = contact["id"]
+    booking_id = booking["booking_id"] if booking else None
     text = message.text
     user_id = str(message.from_user.id)
 
@@ -265,17 +314,28 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
         "message", "student_text_received",
         booking_id=booking_id,
         actor=user_id,
-        detail={"length": len(text)},
+        detail={"length": len(text), "contact_id": contact_id},
     )
 
-    await conversations.append(settings.state_path, booking_id, "user", text)
+    await conversations.append(
+        settings.state_path,
+        "user",
+        text,
+        booking_id=booking_id,
+        contact_id=contact_id,
+    )
 
-    chat = await conversations.load_chat(settings.state_path, booking_id)
+    chat = await conversations.load_chat_by_contact(
+        settings.state_path,
+        contact_id,
+        booking_id=booking_id,
+    )
     controls = await load_controls(settings.state_path)
     mode = chat.mode
     await conversations.update_metadata(
         settings.state_path,
-        booking_id,
+        booking_id=booking_id,
+        contact_id=contact_id,
         scenario_type="student_dialogue",
         current_stage="student_message_received",
         status="manual_takeover" if mode == OperatingMode.MANUAL else "active",
@@ -287,19 +347,22 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
             "blocked_global",
             booking_id=booking_id,
             actor="system",
-            detail={"reason": controls.get("reason")},
+            detail={"reason": controls.get("reason"), "contact_id": contact_id},
         )
         await conversations.update_metadata(
             settings.state_path,
-            booking_id,
+            booking_id=booking_id,
+            contact_id=contact_id,
             current_stage="automation_paused_global",
             status="paused",
         )
         await _handle_manual(
             message,
             booking,
+            contact,
             settings,
             booking_id,
+            contact_id,
             text,
             context_label="global-stop",
         )
@@ -311,19 +374,22 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
             "blocked_chat",
             booking_id=booking_id,
             actor="system",
-            detail={"mode": mode.value},
+            detail={"mode": mode.value, "contact_id": contact_id},
         )
         await conversations.update_metadata(
             settings.state_path,
-            booking_id,
+            booking_id=booking_id,
+            contact_id=contact_id,
             current_stage="automation_paused_chat",
             status="manual_takeover",
         )
         await _handle_manual(
             message,
             booking,
+            contact,
             settings,
             booking_id,
+            contact_id,
             text,
             context_label="chat-stop",
         )
@@ -333,21 +399,27 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
         await _handle_manual(
             message,
             booking,
+            contact,
             settings,
             booking_id,
+            contact_id,
             text,
             context_label="manual",
         )
         return
 
     # AUTO and SEMI_AUTO both call AI
-    history = await conversations.load(settings.state_path, booking_id)
+    history = await conversations.load(
+        settings.state_path,
+        booking_id=booking_id,
+        contact_id=contact_id,
+    )
     knowledge = await knowledge_search(settings.knowledge_path, text, limit=3)
     client = OpenclawClient(settings)
 
     response = await client.chat(
         message=text,
-        booking_context=booking,
+        booking_context=_build_ai_context(contact, booking, booking_candidates),
         history=history[:-1],  # exclude the message we just appended
         knowledge=knowledge,
     )
@@ -358,15 +430,17 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
         "message", "ai_response",
         booking_id=booking_id,
         actor="system",
-        detail={"action": action, "confidence": response.get("confidence")},
+        detail={"action": action, "confidence": response.get("confidence"), "contact_id": contact_id},
     )
 
     await _apply_policy_result(
         message,
         booking,
+        contact,
         response,
         settings,
         booking_id,
+        contact_id,
         student_text=text,
     )
 
@@ -400,24 +474,31 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
     if role != "student":
         return
 
-    booking = await _resolve_booking_or_prompt(message, settings)
-    if not booking:
-        return
-
-    booking_id = booking["booking_id"]
+    contact, booking, booking_candidates = await _resolve_contact_context(message, settings)
+    contact_id = contact["id"]
+    booking_id = booking["booking_id"] if booking else None
 
     caption = message.caption or ""
     image_text = f"[image] {caption}" if caption else "[image]"
     await conversations.append(
-        settings.state_path, booking_id, "user", image_text
+        settings.state_path,
+        "user",
+        image_text,
+        booking_id=booking_id,
+        contact_id=contact_id,
     )
 
-    chat = await conversations.load_chat(settings.state_path, booking_id)
+    chat = await conversations.load_chat_by_contact(
+        settings.state_path,
+        contact_id,
+        booking_id=booking_id,
+    )
     controls = await load_controls(settings.state_path)
     mode = chat.mode
     await conversations.update_metadata(
         settings.state_path,
-        booking_id,
+        booking_id=booking_id,
+        contact_id=contact_id,
         scenario_type="student_dialogue",
         current_stage="student_image_received",
         status="manual_takeover" if mode == OperatingMode.MANUAL else "active",
@@ -429,19 +510,22 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
             "blocked_global",
             booking_id=booking_id,
             actor="system",
-            detail={"reason": controls.get("reason"), "message_type": "image"},
+            detail={"reason": controls.get("reason"), "message_type": "image", "contact_id": contact_id},
         )
         await conversations.update_metadata(
             settings.state_path,
-            booking_id,
+            booking_id=booking_id,
+            contact_id=contact_id,
             current_stage="automation_paused_global",
             status="paused",
         )
         await _handle_manual(
             message,
             booking,
+            contact,
             settings,
             booking_id,
+            contact_id,
             image_text,
             context_label="global-stop",
         )
@@ -453,19 +537,22 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
             "blocked_chat",
             booking_id=booking_id,
             actor="system",
-            detail={"mode": mode.value, "message_type": "image"},
+            detail={"mode": mode.value, "message_type": "image", "contact_id": contact_id},
         )
         await conversations.update_metadata(
             settings.state_path,
-            booking_id,
+            booking_id=booking_id,
+            contact_id=contact_id,
             current_stage="automation_paused_chat",
             status="manual_takeover",
         )
         await _handle_manual(
             message,
             booking,
+            contact,
             settings,
             booking_id,
+            contact_id,
             image_text,
             context_label="chat-stop",
         )
@@ -475,8 +562,10 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
         await _handle_manual(
             message,
             booking,
+            contact,
             settings,
             booking_id,
+            contact_id,
             image_text,
             context_label="manual",
         )
@@ -487,7 +576,7 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
     # Download the largest photo variant
     photo: PhotoSize = message.photo[-1]
     file = await message.bot.get_file(photo.file_id)
-    upload_dir = Path(settings.uploads_path) / booking_id
+    upload_dir = Path(settings.uploads_path) / (booking_id or f"contact-{contact_id}")
     upload_dir.mkdir(parents=True, exist_ok=True)
     local_path = str(upload_dir / f"{photo.file_id}.jpg")
     await message.bot.download_file(file.file_path, destination=local_path)
@@ -498,9 +587,10 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
         pool = get_pool()
         await pool.execute(
             """
-            INSERT INTO attachments (booking_id, file_id, file_type, mime_type, local_path, caption)
-            VALUES ($1, $2, 'photo', 'image/jpeg', $3, $4)
+            INSERT INTO attachments (contact_id, booking_id, file_id, file_type, mime_type, local_path, caption)
+            VALUES ($1, $2, $3, 'photo', 'image/jpeg', $4, $5)
             """,
+            contact_id,
             booking_id,
             photo.file_id,
             local_path,
@@ -509,14 +599,18 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
     except Exception as exc:
         logger.warning("Failed to record attachment metadata: %s", exc)
 
-    history = await conversations.load(settings.state_path, booking_id)
+    history = await conversations.load(
+        settings.state_path,
+        booking_id=booking_id,
+        contact_id=contact_id,
+    )
     knowledge = await knowledge_search(settings.knowledge_path, caption, limit=3) if caption else []
     client = OpenclawClient(settings)
 
     response = await client.image(
         image_path=local_path,
         caption=caption,
-        booking_context=booking,
+        booking_context=_build_ai_context(contact, booking, booking_candidates),
         history=history[:-1],  # exclude the image message we just appended
         knowledge=knowledge,
     )
@@ -524,8 +618,10 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
     await _apply_policy_result(
         message,
         booking,
+        contact,
         response,
         settings,
         booking_id,
+        contact_id,
         student_text=caption or "[image]",
     )

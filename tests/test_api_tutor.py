@@ -134,3 +134,53 @@ def test_tutor_reply_rejects_mismatched_booking_and_escalation_id(monkeypatch) -
         assert exc.detail == "booking_id does not match escalation_id"
     else:
         assert False, "Expected tutor_reply to reject mismatched reply identifiers"
+
+
+def test_tutor_reply_supports_contact_only_escalation(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state", tutor_chat_id=None)
+    body = tutor_api.ReplyRequest(escalation_id=33, text="Ответ по общему вопросу")
+    delivered: dict[str, object] = {}
+
+    async def fake_load_by_id(*args, **kwargs) -> dict:
+        return {
+            "booking_id": None,
+            "contact_id": 91,
+            "status": "pending",
+            "escalation_id": 33,
+        }
+
+    async def fake_load_contact(*args, **kwargs) -> dict:
+        return {"id": 91, "telegram_user_id": 555}
+
+    async def fake_load_booking(*args, **kwargs):
+        return None
+
+    async def fake_send_student_message(**kwargs) -> bool:
+        delivered.update(kwargs)
+        return True
+
+    async def fake_resolve_by_id(*args, **kwargs):
+        return {"booking_id": None, "contact_id": 91, "status": "resolved", "escalation_id": 33}
+
+    async def fake_update_metadata(*args, **kwargs) -> None:
+        return None
+
+    async def fake_audit_log(*args, **kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(tutor_api.escalations, "load_by_id", fake_load_by_id)
+    monkeypatch.setattr(tutor_api.contacts, "load", fake_load_contact)
+    monkeypatch.setattr(tutor_api.bookings, "load", fake_load_booking)
+    monkeypatch.setattr(tutor_api.escalations, "resolve_by_id", fake_resolve_by_id)
+    monkeypatch.setattr(tutor_api.conversations, "update_metadata", fake_update_metadata)
+    monkeypatch.setattr(tutor_api, "send_student_message", fake_send_student_message)
+    monkeypatch.setattr(tutor_api, "audit_log", fake_audit_log)
+    monkeypatch.setattr(tutor_api.registry, "get_student", lambda: object())
+    monkeypatch.setattr(tutor_api.registry, "get_owner", lambda: None)
+
+    response = asyncio.run(tutor_api.tutor_reply(body, settings))
+
+    assert response.ok is True
+    assert response.booking_id is None
+    assert delivered["contact_id"] == 91
+    assert delivered["chat_id"] == 555

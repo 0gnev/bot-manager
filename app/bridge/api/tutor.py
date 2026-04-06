@@ -23,6 +23,7 @@ from bridge.config import Settings, get_settings
 from bridge.delivery import send_student_message
 from bridge.state import (
     bookings,
+    contacts,
     conversations,
     escalations,
     load_controls,
@@ -63,7 +64,7 @@ class ReplyRequest(BaseModel):
 
 class ReplyResponse(BaseModel):
     ok: bool
-    booking_id: str
+    booking_id: str | None
     escalation_id: int
     student_notified: bool
 
@@ -99,12 +100,16 @@ async def tutor_reply(
 
     esc = await _resolve_reply_target(body, settings)
     booking_id = esc["booking_id"]
+    contact_id = esc.get("contact_id")
 
-    booking = await bookings.load(settings.state_path, booking_id)
-    if not booking:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Booking not found")
+    booking = await bookings.load(settings.state_path, booking_id) if booking_id else None
+    if booking and contact_id is None:
+        contact_id = booking.get("contact_id")
+    contact = await contacts.load(settings.state_path, contact_id) if contact_id is not None else None
+    if not booking and not contact:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Booking/contact not found")
 
-    student_id = booking.get("telegram_user_id")
+    student_id = (booking or {}).get("telegram_user_id") or (contact or {}).get("telegram_user_id")
     if not student_id:
         await audit_log(
             "escalation",
@@ -147,6 +152,7 @@ async def tutor_reply(
         chat_id=student_id,
         text=body.text,
         booking_id=booking_id,
+        contact_id=contact_id,
         settings=settings,
         source="tutor_api_reply",
         actor="tutor",
@@ -185,7 +191,8 @@ async def tutor_reply(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Escalation already resolved")
     await conversations.update_metadata(
         settings.state_path,
-        booking_id,
+        booking_id=booking_id,
+        contact_id=contact_id,
         escalation_state="resolved",
         escalation_reason=None,
         current_stage="tutor_reply_sent",
@@ -237,9 +244,10 @@ async def list_escalations(
     pool = get_pool()
     rows = await pool.fetch(
         """
-        SELECT e.*, b.title AS event_title, b.attendee
+        SELECT e.*, b.title AS event_title, b.attendee, c.name AS contact_name, c.telegram_username
         FROM escalations e
         LEFT JOIN bookings b ON b.booking_id = e.booking_id
+        LEFT JOIN contacts c ON c.id = e.contact_id
         WHERE e.status = 'pending'
         ORDER BY e.created_at
         """
@@ -260,7 +268,8 @@ async def list_escalations(
                 attendee = json.loads(attendee)
             except (json.JSONDecodeError, TypeError):
                 attendee = {}
-        data["student_name"] = attendee.get("name", "")
+        data["student_name"] = attendee.get("name", "") or data.pop("contact_name", "") or ""
+        data["contact_telegram"] = data.pop("telegram_username", None)
         data["event_title"] = data.get("event_title", "")
         results.append(data)
     return results
@@ -279,12 +288,16 @@ async def get_escalation(
     if not esc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Escalation not found")
 
-    booking = await bookings.load(settings.state_path, booking_id)
+    booking = await bookings.load(settings.state_path, booking_id) if booking_id else None
     if booking:
         attendee = booking.get("attendee") or {}
         esc["student_name"] = attendee.get("name", "")
         esc["event_title"] = booking.get("title", "")
         esc["start_time"] = booking.get("start_time")
+    elif esc.get("contact_id") is not None:
+        contact = await contacts.load(settings.state_path, esc["contact_id"])
+        if contact:
+            esc["student_name"] = contact.get("name", "")
 
     return esc
 

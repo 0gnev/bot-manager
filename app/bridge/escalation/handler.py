@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 async def escalate(
     message: Message,
-    booking: dict,
+    booking: dict | None,
+    contact: dict,
     question: str,
     settings: Settings,
     image_path: str | None = None,
@@ -50,20 +51,21 @@ async def escalate(
         logger.error("Owner bot not initialised")
         return
 
-    booking_id = booking["booking_id"]
-    attendee = booking.get("attendee") or {}
+    booking_id = booking["booking_id"] if booking else None
+    contact_id = contact["id"]
+    attendee = (booking or {}).get("attendee") or {}
 
     notice = templates.escalation_notice(
-        student_name=attendee.get("name", "Студент"),
+        student_name=attendee.get("name") or contact.get("name") or "Студент",
         booking_id=booking_id,
         question=question,
-        event_title=booking.get("title", "Занятие"),
-        start_time=_parse_dt(booking.get("start_time")),
-        student_email=attendee.get("email"),
-        student_phone=attendee.get("phone"),
-        student_telegram=attendee.get("telegram"),
-        student_time_zone=attendee.get("timeZone"),
-        student_telegram_user_id=booking.get("telegram_user_id"),
+        event_title=(booking or {}).get("title"),
+        start_time=_parse_dt((booking or {}).get("start_time")),
+        student_email=attendee.get("email") or contact.get("email"),
+        student_phone=attendee.get("phone") or contact.get("phone"),
+        student_telegram=attendee.get("telegram") or contact.get("telegram_username"),
+        student_time_zone=attendee.get("timeZone") or contact.get("time_zone"),
+        student_telegram_user_id=(booking or {}).get("telegram_user_id") or contact.get("telegram_user_id"),
     )
 
     sent = await owner_bot.send_message(tutor_chat_id, notice)
@@ -80,13 +82,15 @@ async def escalate(
     await escalations.create(
         settings.state_path,
         booking_id,
+        contact_id=contact_id,
         question=question,
         tutor_message_id=sent.message_id,
         reason="human_review_required",
     )
     await conversations.update_metadata(
         settings.state_path,
-        booking_id,
+        booking_id=booking_id,
+        contact_id=contact_id,
         escalation_state="pending",
         escalation_reason="human_review_required",
         current_stage="awaiting_tutor_reply",
@@ -96,12 +100,12 @@ async def escalate(
     )
 
     await message.answer(templates.escalated_to_tutor())
-    logger.info("Escalated booking=%s → tutor chat=%s", booking_id, tutor_chat_id)
+    logger.info("Escalated booking=%s contact=%s → tutor chat=%s", booking_id, contact_id, tutor_chat_id)
     await audit_log(
         "escalation", "created",
         booking_id=booking_id,
         actor=str(message.from_user.id),
-        detail={"has_image": image_path is not None},
+        detail={"has_image": image_path is not None, "contact_id": contact_id},
     )
 
 

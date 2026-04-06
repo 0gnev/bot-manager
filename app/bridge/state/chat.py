@@ -16,7 +16,8 @@ class OperatingMode(str, Enum):
 
 @dataclass
 class Chat:
-    booking_id: str
+    booking_id: str | None = None
+    contact_id: int | None = None
     mode: OperatingMode = OperatingMode.AUTO
     status: str = "active"
     automation_enabled: bool = True
@@ -34,6 +35,7 @@ class Chat:
     def to_dict(self) -> dict:
         return {
             "booking_id": self.booking_id,
+            "contact_id": self.contact_id,
             "mode": self.mode.value,
             "status": self.status,
             "automation_enabled": self.automation_enabled,
@@ -52,7 +54,8 @@ class Chat:
     @classmethod
     def from_dict(cls, data: dict) -> Chat:
         return cls(
-            booking_id=data["booking_id"],
+            booking_id=data.get("booking_id"),
+            contact_id=data.get("contact_id"),
             mode=OperatingMode(data.get("mode", "auto")),
             status=data.get("status", "active"),
             automation_enabled=data.get("automation_enabled", True),
