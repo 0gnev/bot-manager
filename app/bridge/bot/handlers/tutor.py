@@ -155,17 +155,17 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
     escalation = await escalations.find_pending_by_tutor_message(
         settings.state_path, replied_to_id
     )
-    if not escalation:
-        booking_id = _extract_booking_id_from_message(message.reply_to_message)
-        if booking_id:
-            logger.info(
-                "Tutor reply fallback by booking_id from message text: booking=%s",
-                booking_id,
-            )
-            loaded = await escalations.load(settings.state_path, booking_id)
-            if loaded and loaded.get("status") == "pending":
-                escalation = loaded
-    if not escalation:
+    booking_id = escalation["booking_id"] if escalation else _extract_booking_id_from_message(
+        message.reply_to_message
+    )
+    if not escalation and booking_id:
+        logger.info(
+            "Tutor reply fallback by booking_id from message text: booking=%s",
+            booking_id,
+        )
+        escalation = await escalations.load(settings.state_path, booking_id)
+
+    if not booking_id:
         logger.warning(
             "Tutor reply did not match pending escalation: reply_to_message_id=%s text=%r",
             replied_to_id,
@@ -177,16 +177,20 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         )
         return  # not an escalation reply
 
-    logger.info(
-        "Tutor reply matched escalation: booking=%s tutor_message_id=%s",
-        escalation["booking_id"],
-        escalation.get("tutor_message_id"),
-    )
+    if escalation:
+        logger.info(
+            "Tutor reply matched escalation: booking=%s tutor_message_id=%s status=%s",
+            booking_id,
+            escalation.get("tutor_message_id"),
+            escalation.get("status"),
+        )
+    else:
+        logger.info("Tutor reply routed by booking_id without escalation state: booking=%s", booking_id)
 
-    booking_id = escalation["booking_id"]
     booking = await bookings.load(settings.state_path, booking_id)
     if not booking:
         logger.warning("Tutor replied for missing booking: %s", booking_id)
+        await message.answer("Не удалось найти запись студента для этого ответа.")
         return
 
     student_id = booking.get("telegram_user_id")
@@ -215,12 +219,19 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         await message.answer("Ошибка: не удалось отправить ответ студенту.")
         return
 
-    await escalations.resolve(
-        settings.state_path,
-        booking_id,
-        message.text,
-        resolved_by="tutor",
-    )
+    if escalation and escalation.get("status") == "pending":
+        await escalations.resolve(
+            settings.state_path,
+            booking_id,
+            message.text,
+            resolved_by="tutor",
+        )
+    else:
+        logger.info(
+            "Tutor reply delivered without pending escalation state: booking=%s status=%s",
+            booking_id,
+            escalation.get("status") if escalation else None,
+        )
     await conversations.update_metadata(
         settings.state_path,
         booking_id,
@@ -237,7 +248,12 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         "escalation", "resolved",
         booking_id=booking_id,
         actor="tutor",
-        detail={"via": "telegram"},
+        detail={
+            "via": "telegram",
+            "matched_pending_escalation": bool(
+                escalation and escalation.get("status") == "pending"
+            ),
+        },
     )
 
 
