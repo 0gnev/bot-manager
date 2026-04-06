@@ -182,6 +182,7 @@ def _resolve_contact_booking(rows) -> dict | None:
 
 async def save(state_path: str, booking_id: str, data: dict) -> None:
     pool = get_pool()
+    contact_id = None
     async with pool.acquire() as conn:
         async with conn.transaction():
             contact_id = await _upsert_contact(conn, data)
@@ -234,7 +235,7 @@ async def save(state_path: str, booking_id: str, data: dict) -> None:
     # Export to Obsidian
     try:
         from obsidian_adapter.writer import export_booking
-        export_data = {**data, "booking_id": booking_id}
+        export_data = {**data, "booking_id": booking_id, "contact_id": contact_id}
         await export_booking(_knowledge_path(state_path), export_data)
     except Exception as exc:
         logger.warning("Failed to export booking to Obsidian: %s", exc)

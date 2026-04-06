@@ -201,7 +201,18 @@ async def find_pending_by_tutor_message(
 async def _export_to_obsidian(state_path: str, data: dict) -> None:
     try:
         from obsidian_adapter.writer import export_escalation
+        from bridge.state import bookings, contacts
         knowledge_path = str(Path(state_path).parent / "knowledge")
-        await export_escalation(knowledge_path, data)
+        booking_ctx = await bookings.load(state_path, data["booking_id"]) if data.get("booking_id") else None
+        contact_ctx = (
+            await contacts.load(state_path, data["contact_id"])
+            if data.get("contact_id") is not None else None
+        )
+        await export_escalation(
+            knowledge_path,
+            data,
+            booking=booking_ctx,
+            contact=contact_ctx,
+        )
     except Exception as exc:
         logger.warning("Failed to export escalation to Obsidian: %s", exc)
