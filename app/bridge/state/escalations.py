@@ -1,7 +1,7 @@
 """
-Escalation state — persisted as JSON files.
+Escalation state — persisted in PostgreSQL.
 
-Layout: {state_path}/escalations/{booking_id}.json
+Table: escalations (supports multiple escalations per booking).
 
 Escalation lifecycle:
   pending  → tutor notified, waiting for reply
@@ -10,19 +10,26 @@ Escalation lifecycle:
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
+
+from bridge.db import get_pool
 
 logger = logging.getLogger(__name__)
 
 
-def _esc_path(state_path: str, booking_id: str) -> Path:
-    p = Path(state_path) / "escalations"
-    p.mkdir(parents=True, exist_ok=True)
-    return p / f"{booking_id}.json"
+def _row_to_dict(row) -> dict:
+    """Convert an asyncpg Record to the dict shape consumers expect."""
+    data = dict(row)
+    for ts_field in ("created_at", "resolved_at"):
+        val = data.get(ts_field)
+        if val is not None and hasattr(val, "isoformat"):
+            data[ts_field] = val.isoformat()
+        elif val is None and ts_field == "resolved_at":
+            data[ts_field] = None
+    # Consumers don't use the BIGSERIAL id directly
+    data.pop("id", None)
+    return data
 
 
 async def create(
@@ -32,51 +39,67 @@ async def create(
     tutor_message_id: int | None = None,
     reason: str | None = None,
 ) -> dict:
-    data = {
-        "booking_id": booking_id,
-        "status": "pending",
-        "reason": reason,
-        "question": question,
-        "tutor_message_id": tutor_message_id,
-        "tutor_reply": None,
-        "resolved_by": None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "resolved_at": None,
-    }
-    path = _esc_path(state_path, booking_id)
-    await asyncio.to_thread(
-        path.write_text,
-        json.dumps(data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    pool = get_pool()
+    row = await pool.fetchrow(
+        """
+        INSERT INTO escalations (booking_id, question, tutor_message_id, reason)
+        VALUES ($1, $2, $3, $4)
+        RETURNING *
+        """,
+        booking_id,
+        question,
+        tutor_message_id,
+        reason,
     )
+    data = _row_to_dict(row)
     await _export_to_obsidian(state_path, data)
     return data
 
 
 async def load(state_path: str, booking_id: str) -> dict | None:
-    path = _esc_path(state_path, booking_id)
-    if not path.exists():
+    """Load the latest escalation for a booking (backward-compatible)."""
+    pool = get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT * FROM escalations
+        WHERE booking_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        booking_id,
+    )
+    if row is None:
         return None
-    text = await asyncio.to_thread(path.read_text, encoding="utf-8")
-    return json.loads(text)
+    return _row_to_dict(row)
 
 
 async def resolve(
     state_path: str, booking_id: str, tutor_reply: str, resolved_by: str | None = None
 ) -> dict | None:
-    data = await load(state_path, booking_id)
-    if data is None:
-        return None
-    data["status"] = "resolved"
-    data["tutor_reply"] = tutor_reply
-    data["resolved_by"] = resolved_by
-    data["resolved_at"] = datetime.now(timezone.utc).isoformat()
-    path = _esc_path(state_path, booking_id)
-    await asyncio.to_thread(
-        path.write_text,
-        json.dumps(data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    """Resolve the latest pending escalation for a booking."""
+    pool = get_pool()
+    row = await pool.fetchrow(
+        """
+        UPDATE escalations
+        SET status = 'resolved',
+            tutor_reply = $2,
+            resolved_by = $3,
+            resolved_at = now()
+        WHERE id = (
+            SELECT id FROM escalations
+            WHERE booking_id = $1 AND status = 'pending'
+            ORDER BY created_at DESC
+            LIMIT 1
+        )
+        RETURNING *
+        """,
+        booking_id,
+        tutor_reply,
+        resolved_by,
     )
+    if row is None:
+        return None
+    data = _row_to_dict(row)
     await _export_to_obsidian(state_path, data)
     return data
 
@@ -85,24 +108,18 @@ async def find_pending_by_tutor_message(
     state_path: str, tutor_message_id: int
 ) -> dict | None:
     """Find pending escalation by the message ID sent to tutor."""
-
-    def _scan() -> dict | None:
-        esc_dir = Path(state_path) / "escalations"
-        if not esc_dir.exists():
-            return None
-        for path in esc_dir.glob("*.json"):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                if (
-                    data.get("status") == "pending"
-                    and data.get("tutor_message_id") == tutor_message_id
-                ):
-                    return data
-            except Exception:
-                continue
+    pool = get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT * FROM escalations
+        WHERE tutor_message_id = $1 AND status = 'pending'
+        LIMIT 1
+        """,
+        tutor_message_id,
+    )
+    if row is None:
         return None
-
-    return await asyncio.to_thread(_scan)
+    return _row_to_dict(row)
 
 
 async def _export_to_obsidian(state_path: str, data: dict) -> None:

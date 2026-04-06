@@ -19,6 +19,8 @@ from bridge.api.audit import router as audit_router
 from bridge.api.logs import router as logs_router
 from bridge.api.tutor import router as tutor_router
 from bridge.config import get_settings
+from bridge.db import close_pool, init_pool
+from bridge.db.migrate import run_migrations
 from bridge.idempotency import init as init_idempotency, run_cleanup_loop
 from bridge.runtime_logs import configure_runtime_logging
 from bridge.webhook.router import router as webhook_router
@@ -85,6 +87,10 @@ async def main() -> None:
     settings = get_settings()
     configure_runtime_logging(settings)
 
+    # Initialize database pool and run migrations
+    pool = await init_pool(settings.database_url)
+    await run_migrations(pool)
+
     await init_idempotency(settings.state_path)
 
     app = create_app()
@@ -98,7 +104,10 @@ async def main() -> None:
             "Telegram bot tokens not set — webhook server only, polling disabled"
         )
 
-    await asyncio.gather(*tasks)
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        await close_pool()
 
 
 if __name__ == "__main__":

@@ -215,27 +215,37 @@ async def list_escalations(
     settings: Settings = Depends(get_settings),
 ) -> list[dict]:
     """List all pending escalations with booking context."""
-    import json
-    from pathlib import Path
+    from bridge.db import get_pool
 
-    esc_dir = Path(settings.state_path) / "escalations"
-    if not esc_dir.exists():
-        return []
+    pool = get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT e.*, b.title AS event_title, b.attendee
+        FROM escalations e
+        LEFT JOIN bookings b ON b.booking_id = e.booking_id
+        WHERE e.status = 'pending'
+        ORDER BY e.created_at
+        """
+    )
 
     results = []
-    for path in sorted(esc_dir.glob("*.json")):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if data.get("status") != "pending":
-                continue
-            booking_id = data.get("booking_id", "")
-            booking = await bookings.load(settings.state_path, booking_id)
-            attendee = (booking or {}).get("attendee") or {}
-            data["student_name"] = attendee.get("name", "")
-            data["event_title"] = (booking or {}).get("title", "")
-            results.append(data)
-        except Exception:
-            continue
+    for row in rows:
+        data = dict(row)
+        for ts_field in ("created_at", "resolved_at"):
+            val = data.get(ts_field)
+            if val is not None and hasattr(val, "isoformat"):
+                data[ts_field] = val.isoformat()
+        data.pop("id", None)
+        attendee = data.pop("attendee", None) or {}
+        if isinstance(attendee, str):
+            import json
+            try:
+                attendee = json.loads(attendee)
+            except (json.JSONDecodeError, TypeError):
+                attendee = {}
+        data["student_name"] = attendee.get("name", "")
+        data["event_title"] = data.get("event_title", "")
+        results.append(data)
     return results
 
 
@@ -382,3 +392,80 @@ async def set_global_automation(
     )
 
     return {"ok": True, **controls}
+
+
+# ── Knowledge management ─────────────────────────────────────────────────────
+
+
+class KnowledgeUpdateRequest(BaseModel):
+    file_path: str   # relative path within knowledge dir, e.g. "faq.md"
+    content: str     # new markdown content
+    action: str = "update"  # create | update | delete
+
+
+@router.post(
+    "/knowledge/update",
+    dependencies=[Depends(_verify_token)],
+)
+async def update_knowledge(
+    body: KnowledgeUpdateRequest,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Tutor-only endpoint to create, update, or delete knowledge files.
+
+    Every change is audited in the knowledge_updates table with before/after
+    snapshots. The bot NEVER modifies static knowledge files on its own.
+    """
+    from pathlib import Path
+
+    from bridge.db import get_pool
+
+    knowledge_dir = Path(settings.knowledge_path)
+    target = (knowledge_dir / body.file_path).resolve()
+
+    # Prevent path traversal
+    if not str(target).startswith(str(knowledge_dir.resolve())):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file path — must be within knowledge directory",
+        )
+
+    # Read current content for audit
+    content_before = None
+    if target.exists():
+        content_before = target.read_text(encoding="utf-8")
+
+    if body.action == "delete":
+        if not target.exists():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="File not found")
+        content_after = None
+    else:
+        content_after = body.content
+
+    pool = get_pool()
+    await pool.execute(
+        """
+        INSERT INTO knowledge_updates (file_path, action, content_before, content_after, requested_by, approved)
+        VALUES ($1, $2, $3, $4, 'tutor', TRUE)
+        """,
+        body.file_path,
+        body.action,
+        content_before,
+        content_after,
+    )
+
+    # Apply change to filesystem
+    if body.action == "delete":
+        target.unlink()
+    else:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body.content, encoding="utf-8")
+
+    await audit_log(
+        "knowledge",
+        body.action,
+        actor="tutor",
+        detail={"file_path": body.file_path, "via": "api"},
+    )
+
+    return {"ok": True, "file_path": body.file_path, "action": body.action}
