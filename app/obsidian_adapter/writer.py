@@ -172,18 +172,20 @@ async def export_escalation(knowledge_path: str, escalation: dict) -> None:
     _ensure_dir(out_dir)
 
     booking_id = escalation.get("booking_id", "unknown")
+    escalation_id = escalation.get("escalation_id")
     status = escalation.get("status", "unknown")
     status_emoji = {"pending": "⏳", "resolved": "✅"}.get(status, "⚪")
 
     lines = [
         "---",
         f"booking_id: {booking_id}",
+        f"escalation_id: {escalation_id or ''}",
         f"status: {status}",
         f"created_at: {escalation.get('created_at', '')}",
         f"resolved_at: {escalation.get('resolved_at', '')}",
         "---",
         "",
-        f"# Эскалация — {booking_id}",
+        f"# Эскалация — {booking_id}{f' / {escalation_id}' if escalation_id else ''}",
         "",
         f"**Статус:** {status_emoji} {status}",
         "",
@@ -203,5 +205,6 @@ async def export_escalation(knowledge_path: str, escalation: dict) -> None:
         ]
 
     content = "\n".join(lines)
-    path = out_dir / f"{booking_id}.md"
+    filename = f"{booking_id}-{escalation_id}.md" if escalation_id else f"{booking_id}.md"
+    path = out_dir / filename
     await asyncio.to_thread(path.write_text, content, encoding="utf-8")

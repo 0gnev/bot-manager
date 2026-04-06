@@ -21,14 +21,13 @@ logger = logging.getLogger(__name__)
 def _row_to_dict(row) -> dict:
     """Convert an asyncpg Record to the dict shape consumers expect."""
     data = dict(row)
+    data["escalation_id"] = data.pop("id")
     for ts_field in ("created_at", "resolved_at"):
         val = data.get(ts_field)
         if val is not None and hasattr(val, "isoformat"):
             data[ts_field] = val.isoformat()
         elif val is None and ts_field == "resolved_at":
             data[ts_field] = None
-    # Consumers don't use the BIGSERIAL id directly
-    data.pop("id", None)
     return data
 
 
@@ -73,6 +72,37 @@ async def load(state_path: str, booking_id: str) -> dict | None:
     return _row_to_dict(row)
 
 
+async def load_by_id(state_path: str, escalation_id: int) -> dict | None:
+    """Load an escalation by its stable database identifier."""
+    pool = get_pool()
+    row = await pool.fetchrow(
+        "SELECT * FROM escalations WHERE id = $1",
+        escalation_id,
+    )
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
+async def list_pending(state_path: str, booking_id: str | None = None) -> list[dict]:
+    """List pending escalations, optionally scoped to one booking."""
+    pool = get_pool()
+    if booking_id:
+        rows = await pool.fetch(
+            """
+            SELECT * FROM escalations
+            WHERE booking_id = $1 AND status = 'pending'
+            ORDER BY created_at
+            """,
+            booking_id,
+        )
+    else:
+        rows = await pool.fetch(
+            "SELECT * FROM escalations WHERE status = 'pending' ORDER BY created_at"
+        )
+    return [_row_to_dict(row) for row in rows]
+
+
 async def resolve(
     state_path: str, booking_id: str, tutor_reply: str, resolved_by: str | None = None
 ) -> dict | None:
@@ -94,6 +124,35 @@ async def resolve(
         RETURNING *
         """,
         booking_id,
+        tutor_reply,
+        resolved_by,
+    )
+    if row is None:
+        return None
+    data = _row_to_dict(row)
+    await _export_to_obsidian(state_path, data)
+    return data
+
+
+async def resolve_by_id(
+    state_path: str,
+    escalation_id: int,
+    tutor_reply: str,
+    resolved_by: str | None = None,
+) -> dict | None:
+    """Resolve one exact escalation record by id."""
+    pool = get_pool()
+    row = await pool.fetchrow(
+        """
+        UPDATE escalations
+        SET status = 'resolved',
+            tutor_reply = $2,
+            resolved_by = $3,
+            resolved_at = now()
+        WHERE id = $1 AND status = 'pending'
+        RETURNING *
+        """,
+        escalation_id,
         tutor_reply,
         resolved_by,
     )

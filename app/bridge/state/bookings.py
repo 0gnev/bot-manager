@@ -29,6 +29,8 @@ def _row_to_dict(row) -> dict:
     data = dict(row)
     # Remove internal PG fields consumers don't expect
     data.pop("contact_id", None)
+    data.pop("active_booking_id", None)
+    data.pop("context_rank", None)
     # Convert timestamps to ISO strings
     for ts_field in ("created_at", "updated_at", "start_time", "end_time"):
         val = data.get(ts_field)
@@ -50,11 +52,12 @@ async def _upsert_contact(conn, data: dict) -> int | None:
     attendee = data.get("attendee") or {}
     telegram_user_id = data.get("telegram_user_id")
     telegram_username = (attendee.get("telegram") or "").lstrip("@") or None
+    email = attendee.get("email")
 
-    if not telegram_user_id and not telegram_username and not attendee.get("email"):
+    if not telegram_user_id and not telegram_username and not email:
         return None
 
-    # Try to find existing contact by telegram_user_id first, then username
+    # Try to find existing contact by telegram_user_id first, then username, then email.
     contact_id = None
     if telegram_user_id:
         row = await conn.fetchrow(
@@ -71,8 +74,15 @@ async def _upsert_contact(conn, data: dict) -> int | None:
         if row:
             contact_id = row["id"]
 
+    if contact_id is None and email:
+        row = await conn.fetchrow(
+            "SELECT id FROM contacts WHERE lower(email) = lower($1)",
+            email,
+        )
+        if row:
+            contact_id = row["id"]
+
     name = attendee.get("name")
-    email = attendee.get("email")
     phone = attendee.get("phone")
     time_zone = attendee.get("timeZone")
 
@@ -113,6 +123,19 @@ async def _upsert_contact(conn, data: dict) -> int | None:
         time_zone,
     )
     return row["id"]
+
+
+def _choose_booking_row(rows) -> dict | None:
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return _row_to_dict(rows[0])
+
+    active_rows = [row for row in rows if row["context_rank"] == 1]
+    if len(active_rows) == 1:
+        return _row_to_dict(active_rows[0])
+
+    return None
 
 
 # ── public API ───────────────────────────────────────────────────────────────
@@ -201,19 +224,37 @@ async def link_telegram_user(
             if row is None:
                 return None
 
+            booking_data = _row_to_dict(row)
+            booking_data["telegram_user_id"] = telegram_user_id
+            contact_id = row["contact_id"] or await _upsert_contact(conn, booking_data)
+
             # Update booking
             await conn.execute(
-                "UPDATE bookings SET telegram_user_id = $1, updated_at = now() WHERE booking_id = $2",
+                """
+                UPDATE bookings
+                SET telegram_user_id = $1,
+                    contact_id = COALESCE($3, contact_id),
+                    updated_at = now()
+                WHERE booking_id = $2
+                """,
                 telegram_user_id,
                 booking_id,
+                contact_id,
             )
 
-            # Update contact if exists
-            if row["contact_id"]:
+            # Update contact if exists and make this the active booking context.
+            if contact_id:
                 await conn.execute(
-                    "UPDATE contacts SET telegram_user_id = $1, updated_at = now() WHERE id = $2",
+                    """
+                    UPDATE contacts
+                    SET telegram_user_id = $1,
+                        active_booking_id = $2,
+                        updated_at = now()
+                    WHERE id = $3
+                    """,
                     telegram_user_id,
-                    row["contact_id"],
+                    booking_id,
+                    contact_id,
                 )
 
             updated = await conn.fetchrow(
@@ -222,43 +263,104 @@ async def link_telegram_user(
             return _row_to_dict(updated) if updated else None
 
 
-async def find_by_telegram_user(
+async def find_all_by_telegram_user(
     state_path: str, telegram_user_id: int
-) -> dict | None:
-    """Find the latest active booking for a Telegram user."""
+) -> list[dict]:
+    """List active bookings for a Telegram user ordered by explicit context first."""
     pool = get_pool()
-    row = await pool.fetchrow(
+    rows = await pool.fetch(
         """
-        SELECT * FROM bookings
-        WHERE telegram_user_id = $1 AND status = 'active'
-        ORDER BY created_at DESC
-        LIMIT 1
+        SELECT b.*,
+               c.active_booking_id,
+               CASE WHEN c.active_booking_id = b.booking_id THEN 1 ELSE 0 END AS context_rank
+        FROM bookings b
+        LEFT JOIN contacts c ON c.id = b.contact_id
+        WHERE b.status = 'active'
+          AND (
+            b.telegram_user_id = $1
+            OR c.telegram_user_id = $1
+          )
+        ORDER BY context_rank DESC,
+                 b.updated_at DESC,
+                 b.start_time ASC NULLS LAST,
+                 b.created_at DESC
         """,
         telegram_user_id,
     )
-    if row is None:
-        return None
-    return _row_to_dict(row)
+    return [_row_to_dict(row) for row in rows]
+
+
+async def find_by_telegram_user(
+    state_path: str, telegram_user_id: int
+) -> dict | None:
+    """Find the active booking context for a Telegram user when it is unambiguous."""
+    pool = get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT b.*,
+               c.active_booking_id,
+               CASE WHEN c.active_booking_id = b.booking_id THEN 1 ELSE 0 END AS context_rank
+        FROM bookings b
+        LEFT JOIN contacts c ON c.id = b.contact_id
+        WHERE b.status = 'active'
+          AND (
+            b.telegram_user_id = $1
+            OR c.telegram_user_id = $1
+          )
+        ORDER BY context_rank DESC,
+                 b.updated_at DESC,
+                 b.start_time ASC NULLS LAST,
+                 b.created_at DESC
+        """,
+        telegram_user_id,
+    )
+    return _choose_booking_row(rows)
+
+
+async def find_all_by_telegram_username(
+    state_path: str, username: str
+) -> list[dict]:
+    """List active, unlinked bookings that match a Telegram username."""
+    normalized = username.lower().lstrip("@")
+    pool = get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT b.*,
+               c.active_booking_id,
+               CASE WHEN c.active_booking_id = b.booking_id THEN 1 ELSE 0 END AS context_rank
+        FROM bookings b
+        JOIN contacts c ON c.id = b.contact_id
+        WHERE b.status = 'active'
+          AND b.telegram_user_id IS NULL
+          AND lower(c.telegram_username) = $1
+        ORDER BY context_rank DESC,
+                 b.updated_at DESC,
+                 b.start_time ASC NULLS LAST,
+                 b.created_at DESC
+        """,
+        normalized,
+    )
+    return [_row_to_dict(row) for row in rows]
 
 
 async def find_by_telegram_username(
     state_path: str, username: str
 ) -> dict | None:
     """Find an active, unlinked booking where attendee.telegram matches @username."""
-    normalized = username.lower().lstrip("@")
-    pool = get_pool()
-    row = await pool.fetchrow(
+    return _choose_booking_row(await get_pool().fetch(
         """
-        SELECT b.* FROM bookings b
+        SELECT b.*,
+               c.active_booking_id,
+               CASE WHEN c.active_booking_id = b.booking_id THEN 1 ELSE 0 END AS context_rank
+        FROM bookings b
         JOIN contacts c ON c.id = b.contact_id
         WHERE b.status = 'active'
           AND b.telegram_user_id IS NULL
-          AND lower(c.telegram_username) = $1
-        ORDER BY b.created_at DESC
-        LIMIT 1
+          AND lower(c.telegram_username) = lower($1)
+        ORDER BY context_rank DESC,
+                 b.updated_at DESC,
+                 b.start_time ASC NULLS LAST,
+                 b.created_at DESC
         """,
-        normalized,
-    )
-    if row is None:
-        return None
-    return _row_to_dict(row)
+        username.lstrip("@"),
+    ))

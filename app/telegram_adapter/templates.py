@@ -8,6 +8,8 @@ from __future__ import annotations
 from datetime import datetime
 from html import escape
 
+from bridge.prompts.loader import render_prompt
+
 
 def fmt_dt(dt: datetime | None) -> str:
     if dt is None:
@@ -47,6 +49,21 @@ def booking_not_found() -> str:
         "Не удалось найти вашу запись. "
         "Убедитесь, что вы перешли по ссылке из подтверждения бронирования."
     )
+
+
+def multiple_bookings_found(bookings: list[dict]) -> str:
+    lines = [
+        "У вас несколько активных записей.",
+        "Чтобы выбрать нужную, откройте бота по ссылке из подтверждения именно этой записи.",
+        "",
+        "<b>Доступные записи:</b>",
+    ]
+    for index, booking in enumerate(bookings, start=1):
+        lines.append(
+            f"{index}. {escape(booking.get('title', 'Занятие'))} "
+            f"({escape(booking.get('start_time_label', '—'))})"
+        )
+    return "\n".join(lines)
 
 
 def already_linked() -> str:

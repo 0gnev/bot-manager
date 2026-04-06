@@ -98,17 +98,37 @@ def test_multiple_escalations_per_booking(db_clean) -> None:
     async def _run():
         await _create_booking("booking-multi")
 
-        await escalations.create("", "booking-multi", question="Q1", reason="r1")
-        await escalations.create("", "booking-multi", question="Q2", reason="r2")
+        first = await escalations.create("", "booking-multi", question="Q1", reason="r1")
+        second = await escalations.create("", "booking-multi", question="Q2", reason="r2")
 
         # load returns the latest by created_at
         latest = await escalations.load("", "booking-multi")
         assert latest["question"] == "Q2"
 
+        pending = await escalations.list_pending("", booking_id="booking-multi")
+        assert [item["escalation_id"] for item in pending] == [
+            first["escalation_id"],
+            second["escalation_id"],
+        ]
+
+        by_id = await escalations.load_by_id("", first["escalation_id"])
+        assert by_id is not None
+        assert by_id["question"] == "Q1"
+
         # resolve resolves the latest pending
         resolved = await escalations.resolve("", "booking-multi", "Answer to Q2", resolved_by="tutor")
         assert resolved["question"] == "Q2"
         assert resolved["status"] == "resolved"
+
+        resolved_first = await escalations.resolve_by_id(
+            "",
+            first["escalation_id"],
+            "Answer to Q1",
+            resolved_by="tutor",
+        )
+        assert resolved_first is not None
+        assert resolved_first["question"] == "Q1"
+        assert resolved_first["status"] == "resolved"
 
     run_async(_run())
 
@@ -162,6 +182,25 @@ def test_booking_link_telegram_user(db_clean) -> None:
         found = await bookings.find_by_telegram_user("", 12345)
         assert found is not None
         assert found["booking_id"] == "booking-link"
+
+    run_async(_run())
+
+
+def test_booking_requires_active_context_when_multiple_active_bookings(db_clean) -> None:
+    async def _run():
+        await _create_booking("booking-a", telegram_user_id=12345)
+        await _create_booking("booking-b", telegram_user_id=12345)
+
+        found = await bookings.find_by_telegram_user("", 12345)
+        assert found is None
+
+        all_found = await bookings.find_all_by_telegram_user("", 12345)
+        assert {item["booking_id"] for item in all_found} == {"booking-a", "booking-b"}
+
+        await bookings.link_telegram_user("", "booking-b", 12345)
+        active = await bookings.find_by_telegram_user("", 12345)
+        assert active is not None
+        assert active["booking_id"] == "booking-b"
 
     run_async(_run())
 
