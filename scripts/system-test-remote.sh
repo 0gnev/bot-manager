@@ -3,11 +3,36 @@ set -euo pipefail
 
 SYSTEM_TEST_ENV_FILE="${SYSTEM_TEST_ENV_FILE:-.env.remote}"
 
+load_env_file() {
+  local env_file="$1"
+  local line key value
+
+  while IFS= read -r line || [ -n "${line}" ]; do
+    line="${line%$'\r'}"
+
+    case "${line}" in
+      ""|\#*)
+        continue
+        ;;
+    esac
+
+    if [[ "${line}" != *=* ]]; then
+      continue
+    fi
+
+    key="${line%%=*}"
+    value="${line#*=}"
+
+    if [ -n "${!key:-}" ]; then
+      continue
+    fi
+
+    export "${key}=${value}"
+  done < "${env_file}"
+}
+
 if [ -f "${SYSTEM_TEST_ENV_FILE}" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  . "${SYSTEM_TEST_ENV_FILE}"
-  set +a
+  load_env_file "${SYSTEM_TEST_ENV_FILE}"
 fi
 
 SYSTEM_TEST_HOST="${SYSTEM_TEST_HOST:-}"
