@@ -15,26 +15,31 @@ Both student and tutor-facing Telegram handlers are mounted here.
 from __future__ import annotations
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 
 from bridge.bot import registry
-from bridge.bot.middleware import IdempotencyMiddleware, RoleMiddleware
 from bridge.bot.handlers import start, messages, tutor
+from bridge.bot.middleware import IdempotencyMiddleware, RoleMiddleware
 from bridge.config import Settings
 
 
 def create_bots_and_dispatcher(settings: Settings) -> tuple[Bot, Bot | None, Dispatcher]:
-    defaults = DefaultBotProperties(parse_mode=ParseMode.HTML)
-    bot_student = Bot(token=settings.telegram_bot_token_student, default=defaults)
+    telegram_api_base_url = getattr(settings, "telegram_api_base_url", "") or None
+    bot_student = registry.build_bot(
+        settings.telegram_bot_token_student,
+        telegram_api_base_url,
+    )
     bot_owner = None
     if settings.telegram_bot_token_owner:
-        bot_owner = Bot(token=settings.telegram_bot_token_owner, default=defaults)
+        bot_owner = registry.build_bot(
+            settings.telegram_bot_token_owner,
+            telegram_api_base_url,
+        )
 
     registry.register(
         bot_student,
         settings.telegram_bot_token_owner or None,
         owner_bot=bot_owner,
+        telegram_api_base_url=telegram_api_base_url,
     )
 
     dp = Dispatcher()

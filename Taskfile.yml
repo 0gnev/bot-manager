@@ -54,16 +54,16 @@ tasks:
   tunnel:
     desc: Start bridge + cloudflared tunnel (URL printed in logs)
     cmds:
-      - docker compose --env-file .env --profile tunnel up -d --build bridge tunnel
-      - echo ""
-      - echo "Waiting for tunnel URL..."
-      - sleep 4
-      - docker compose --env-file .env logs tunnel 2>&1 | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -1 | xargs -I{} echo "Tunnel URL: {}/webhook/planerka"
+      - 'docker compose --env-file .env --profile tunnel up -d --build bridge tunnel'
+      - 'echo ""'
+      - 'echo "Waiting for tunnel URL..."'
+      - 'sleep 4'
+      - 'docker compose --env-file .env logs tunnel 2>&1 | grep -o ''https://[a-z0-9-]*\.trycloudflare\.com'' | tail -1 | xargs -I{} echo "Tunnel URL: {}/webhook/planerka"'
 
   tunnel-url:
     desc: Print current tunnel URL
     cmds:
-      - docker compose --env-file .env logs tunnel 2>&1 | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -1 | xargs -I{} echo "Tunnel URL: {}/webhook/planerka"
+      - 'docker compose --env-file .env logs tunnel 2>&1 | grep -o ''https://[a-z0-9-]*\.trycloudflare\.com'' | tail -1 | xargs -I{} echo "Tunnel URL: {}/webhook/planerka"'
 
   tunnel-logs:
     desc: Follow tunnel + bridge logs
@@ -79,6 +79,16 @@ tasks:
     desc: Run Planerka integration test inside bridge container
     cmds:
       - docker compose --env-file .env run --rm --no-deps bridge python /workspace/scripts/test-planerka.py
+
+  test:
+    desc: Run the full pytest suite in a disposable Docker container
+    cmds:
+      - bash scripts/run-pytest-in-docker.sh
+
+  test-system:
+    desc: Run end-to-end system tests against fake Telegram/OpenClaw services in Docker
+    cmds:
+      - bash scripts/run-pytest-in-docker.sh tests/system
 
   system-test-remote:
     desc: Run remote system tests over SSH using SYSTEM_TEST_* env vars

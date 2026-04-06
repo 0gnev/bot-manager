@@ -17,3 +17,8 @@ docker compose --env-file .env.local logs -f
 ## Runtime data
 - knowledge mirror: `data/knowledge/`
 - audit log: `data/audit/`
+
+## Tests
+- full Docker-backed test suite: `task test`
+- Docker-backed system tests only: `task test-system`
+- test workflow details: [system-testing.md](/private/var/www/bot-manager/docs/system-testing.md)

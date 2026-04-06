@@ -61,7 +61,7 @@ fi
 if [ -z "${SYSTEM_TEST_COMMAND}" ]; then
   echo "SYSTEM_TEST_COMMAND is required"
   echo "Example:"
-  echo "  SYSTEM_TEST_COMMAND='docker compose --env-file .env exec -T bridge python -m pytest -q tests/system'"
+  echo "  SYSTEM_TEST_COMMAND='task test-system'"
   exit 1
 fi
 
