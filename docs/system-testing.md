@@ -50,6 +50,8 @@ task test-system
 These commands do not require local `pytest` installation. They:
 
 - start `postgres` through `docker compose`
+- wait for PostgreSQL readiness
+- create/use an isolated `bridge_test` database inside that PostgreSQL container
 - run tests in a disposable `python:3.12-slim` container
 - mount the current repo into that container
 
@@ -90,6 +92,7 @@ Remote wrapper:
 
 - System tests still require Docker access.
 - The Docker-based test runner installs `requirements-dev.txt` on each run.
+- The Docker-based runner does not target the live `bridge` database by default.
 - The remote server must have both Docker and `task` installed if
   `SYSTEM_TEST_COMMAND=task test-system` is used.
 - These tests are deterministic only because Telegram and OpenClaw are faked.
@@ -101,4 +104,3 @@ Remote wrapper:
 - `task test-system`: when changing booking, Telegram, escalation, tutor reply,
   OpenClaw routing, or webhook logic
 - `task system-test-remote`: when validating behavior on the dedicated server
-
