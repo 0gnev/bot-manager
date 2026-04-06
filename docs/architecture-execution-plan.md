@@ -12,6 +12,8 @@ Source of truth: the compact architecture prompt provided for Bot Manager.
 
 ## Next priority tasks
 
+- [ ] Implement PostgreSQL-backed runtime state with migration, tests, and production deployment plan.
+  Reference: [postgresql-migration-task.md](/private/var/www/bot-manager/docs/postgresql-migration-task.md)
 - [ ] Add a dedicated `contacts` entity aligned with the architecture instead of keeping contact data only inside booking payloads.
 - [ ] Expand stored message records to include direction, attachments, model output, delivery status, and transport IDs.
 - [ ] Enrich escalation packages with summary, relevant conversation history, and draft reply when available.
