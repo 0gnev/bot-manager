@@ -21,7 +21,7 @@ from bridge.config import Settings
 from bridge.delivery import send_student_message
 from bridge.escalation.handler import escalate
 from bridge.policies import evaluate_ai_response
-from bridge.state import bookings, contacts, conversations, escalations, load_controls, OperatingMode
+from bridge.state import approvals, bookings, contacts, conversations, escalations, load_controls, OperatingMode
 from obsidian_adapter.reader import search as knowledge_search
 from telegram_adapter import templates
 
@@ -214,6 +214,45 @@ async def _apply_policy_result(
     await message.answer("Сейчас я не могу ответить автоматически.")
 
 
+async def _resume_stale_automation_if_needed(
+    settings: Settings,
+    *,
+    booking_id: str | None,
+    contact_id: int,
+    chat,
+):
+    if chat.automation_enabled or chat.mode == OperatingMode.MANUAL:
+        return chat
+
+    pending_approvals = await approvals.list_pending(
+        settings.state_path,
+        booking_id=booking_id,
+        contact_id=contact_id if booking_id is None else None,
+    )
+    pending_escalations = await escalations.list_pending(
+        settings.state_path,
+        booking_id=booking_id,
+        contact_id=contact_id if booking_id is None else None,
+    )
+    if pending_approvals or pending_escalations:
+        return chat
+
+    logger.info(
+        "Auto-resuming stale chat automation: booking=%s contact=%s mode=%s",
+        booking_id,
+        contact_id,
+        chat.mode.value,
+    )
+    return await conversations.update_metadata(
+        settings.state_path,
+        booking_id=booking_id,
+        contact_id=contact_id,
+        automation_enabled=True,
+        status="active",
+        current_stage="automation_auto_resumed",
+    )
+
+
 async def _handle_manual(
     message: Message,
     booking: dict | None,
@@ -338,6 +377,12 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
         scenario_type="student_dialogue",
         current_stage="student_message_received",
         status="manual_takeover" if mode == OperatingMode.MANUAL else "active",
+    )
+    chat = await _resume_stale_automation_if_needed(
+        settings,
+        booking_id=booking_id,
+        contact_id=contact_id,
+        chat=chat,
     )
 
     if not controls.get("global_automation_enabled", True):
@@ -501,6 +546,12 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
         scenario_type="student_dialogue",
         current_stage="student_image_received",
         status="manual_takeover" if mode == OperatingMode.MANUAL else "active",
+    )
+    chat = await _resume_stale_automation_if_needed(
+        settings,
+        booking_id=booking_id,
+        contact_id=contact_id,
+        chat=chat,
     )
 
     if not controls.get("global_automation_enabled", True):
