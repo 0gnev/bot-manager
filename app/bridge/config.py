@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     tutor_api_token: str = ""    # Separate auth for /api/tutor/* endpoints
     tutor_chat_id: int | None = None
 
+    # ── Database ──────────────────────────────────────────────────────────────
+    database_url: str = "postgresql://bridge:bridge@postgres:5432/bridge"
+
     # ── Runtime paths ─────────────────────────────────────────────────────────
     state_path: str = "/workspace/data/state"
     uploads_path: str = "/workspace/data/uploads"
