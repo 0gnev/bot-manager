@@ -400,6 +400,7 @@ These are not forgotten bugs; they are still-open follow-up tasks.
 Reference:
 
 - [architecture-execution-plan.md](/private/var/www/bot-manager/docs/architecture-execution-plan.md)
+- [postgresql-migration-task.md](/private/var/www/bot-manager/docs/postgresql-migration-task.md)
 
 ## 15. What to keep in a private personal backup
 
