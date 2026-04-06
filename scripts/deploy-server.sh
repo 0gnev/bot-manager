@@ -3,6 +3,15 @@ set -euo pipefail
 
 REF="${1:-main}"
 
+print_git_diagnostics() {
+  echo "Deploy user/context:"
+  whoami || true
+  id || true
+  pwd || true
+  echo "Git directory permissions:"
+  ls -ld . .git .git/objects .git/objects/pack 2>/dev/null || true
+}
+
 echo "Deploying ref: ${REF}"
 
 if [ ! -f .env ]; then
@@ -13,6 +22,8 @@ fi
 # Allow deployments even when the repo is accessed under a different login
 # than the original owner of the working tree.
 git config --global --add safe.directory "$(pwd)"
+
+print_git_diagnostics
 
 git fetch --all --prune
 
@@ -39,7 +50,11 @@ if [ -n "${tracked_runtime}" ]; then
 fi
 
 if [ "${REF}" = "main" ]; then
-  git pull --ff-only origin main
+  if ! git pull --ff-only origin main; then
+    echo "git pull failed; dumping git permission diagnostics"
+    print_git_diagnostics
+    exit 128
+  fi
 fi
 
 # Bind-mounted app/config files do not always trigger container recreation.
