@@ -96,7 +96,6 @@ async def escalate(
         current_stage="awaiting_tutor_reply",
         status="escalated",
         assigned_human=str(tutor_chat_id),
-        automation_enabled=False,
     )
 
     await message.answer(templates.escalated_to_tutor())

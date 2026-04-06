@@ -140,6 +140,7 @@ def test_tutor_reply_supports_contact_only_escalation(monkeypatch) -> None:
     settings = SimpleNamespace(state_path="/tmp/state", tutor_chat_id=None)
     body = tutor_api.ReplyRequest(escalation_id=33, text="Ответ по общему вопросу")
     delivered: dict[str, object] = {}
+    metadata_updates: list[dict] = []
 
     async def fake_load_by_id(*args, **kwargs) -> dict:
         return {
@@ -163,6 +164,7 @@ def test_tutor_reply_supports_contact_only_escalation(monkeypatch) -> None:
         return {"booking_id": None, "contact_id": 91, "status": "resolved", "escalation_id": 33}
 
     async def fake_update_metadata(*args, **kwargs) -> None:
+        metadata_updates.append(kwargs)
         return None
 
     async def fake_audit_log(*args, **kwargs) -> None:
@@ -184,6 +186,9 @@ def test_tutor_reply_supports_contact_only_escalation(monkeypatch) -> None:
     assert response.booking_id is None
     assert delivered["contact_id"] == 91
     assert delivered["chat_id"] == 555
+    assert metadata_updates
+    assert metadata_updates[0]["contact_id"] == 91
+    assert "automation_enabled" not in metadata_updates[0]
 
 
 def test_set_contact_chat_mode_updates_contact_scoped_chat(monkeypatch) -> None:

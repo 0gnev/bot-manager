@@ -248,7 +248,7 @@ def test_student_with_multiple_bookings_must_choose_deeplink(system_harness) -> 
 def test_multiple_parallel_escalations_are_independently_replyable(system_harness) -> None:
     booking_id = "booking-parallel-escalations"
     first_question = "У меня нестандартный вопрос номер один"
-    second_question = "И еще вопрос номер два, который нужно обсудить вручную"
+    second_question = "И еще нестандартный вопрос номер два, который нужно обсудить вручную"
 
     system_harness.post_planerka_webhook(_booking_payload(booking_id))
     system_harness.send_student_text(f"/start {booking_id}")
@@ -287,11 +287,11 @@ def test_multiple_parallel_escalations_are_independently_replyable(system_harnes
         system_harness.student_token,
         after_index=student_before,
         chat_id=system_harness.student_chat_id,
-        contains="преподаватель ответит",
+        contains="передал",
     )
 
     assert "ID брони" in tutor_notice_two["text"]
-    assert "Ваш преподаватель ответит в ближайшее время." == student_notice_two["text"]
+    assert "преподавателю" in student_notice_two["text"]
 
     pending = [
         item
@@ -342,6 +342,46 @@ def test_multiple_parallel_escalations_are_independently_replyable(system_harnes
         if item["booking_id"] == booking_id
     ]
     assert pending_after_all_replies == []
+
+
+def test_basic_question_after_escalation_is_still_answered_automatically(system_harness) -> None:
+    booking_id = "booking-escalation-then-basic"
+    escalated_question = "У меня нестандартный вопрос по индивидуальному плану"
+    basic_question = "Когда занятие и где ссылка?"
+
+    system_harness.post_planerka_webhook(_booking_payload(booking_id))
+    system_harness.send_student_text(f"/start {booking_id}")
+    system_harness.telegram.wait_for_sent_count(system_harness.student_token, 2)
+
+    tutor_before = system_harness.telegram.sent_count(system_harness.owner_token)
+    student_before = system_harness.telegram.sent_count(system_harness.student_token)
+    system_harness.send_student_text(escalated_question)
+
+    system_harness.telegram.wait_for_sent_message(
+        system_harness.owner_token,
+        after_index=tutor_before,
+        chat_id=system_harness.tutor_chat_id,
+        contains=escalated_question,
+    )
+    system_harness.telegram.wait_for_sent_message(
+        system_harness.student_token,
+        after_index=student_before,
+        chat_id=system_harness.student_chat_id,
+        contains="передал",
+    )
+
+    tutor_before = system_harness.telegram.sent_count(system_harness.owner_token)
+    student_before = system_harness.telegram.sent_count(system_harness.student_token)
+    system_harness.send_student_text(basic_question)
+
+    basic_reply = system_harness.telegram.wait_for_sent_message(
+        system_harness.student_token,
+        after_index=student_before,
+        chat_id=system_harness.student_chat_id,
+        contains="Ссылка указана",
+    )
+    assert "Занятие в запланированное время" in basic_reply["text"]
+    assert system_harness.telegram.sent_count(system_harness.owner_token) == tutor_before
 
 
 def test_tutor_reply_routes_contact_only_escalation_without_booking(system_harness) -> None:
