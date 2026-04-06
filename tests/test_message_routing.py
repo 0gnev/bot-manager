@@ -4,6 +4,8 @@ import asyncio
 from types import SimpleNamespace
 
 from bridge.bot.handlers import messages, tutor
+from bridge.bot.filters import StudentBotFilter, TutorBotFilter
+from bridge.bot import registry
 from bridge.state import OperatingMode
 from telegram_adapter import templates
 
@@ -168,3 +170,27 @@ def test_manual_escalation_notice_includes_student_details() -> None:
     assert "<b>Email:</b> student@example.com" in notice
     assert "<b>Telegram user ID:</b> <code>555</code>" in notice
     assert "Так какая стоимость занятия?" in notice
+
+
+def test_student_bot_filter_matches_only_student_bot() -> None:
+    registry.register(
+        SimpleNamespace(token="student-token"),
+        owner_token="owner-token",
+        owner_bot=SimpleNamespace(token="owner-token"),
+    )
+    flt = StudentBotFilter()
+
+    assert asyncio.run(flt(bot=SimpleNamespace(token="student-token"))) is True
+    assert asyncio.run(flt(bot=SimpleNamespace(token="owner-token"))) is False
+
+
+def test_tutor_bot_filter_matches_only_owner_bot() -> None:
+    registry.register(
+        SimpleNamespace(token="student-token"),
+        owner_token="owner-token",
+        owner_bot=SimpleNamespace(token="owner-token"),
+    )
+    flt = TutorBotFilter()
+
+    assert asyncio.run(flt(bot=SimpleNamespace(token="owner-token"))) is True
+    assert asyncio.run(flt(bot=SimpleNamespace(token="student-token"))) is False

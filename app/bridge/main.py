@@ -10,23 +10,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 
 import uvicorn
 from fastapi import FastAPI
 
 from bridge.api.approvals import router as approvals_router
 from bridge.api.audit import router as audit_router
+from bridge.api.logs import router as logs_router
 from bridge.api.tutor import router as tutor_router
 from bridge.config import get_settings
 from bridge.idempotency import init as init_idempotency, run_cleanup_loop
+from bridge.runtime_logs import configure_runtime_logging
 from bridge.webhook.router import router as webhook_router
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-    stream=sys.stdout,
-)
 logger = logging.getLogger(__name__)
 
 
@@ -35,6 +30,7 @@ def create_app() -> FastAPI:
     app.include_router(webhook_router)
     app.include_router(tutor_router)
     app.include_router(audit_router)
+    app.include_router(logs_router)
     app.include_router(approvals_router)
 
     @app.get("/health")
@@ -72,8 +68,9 @@ async def run_server(app: FastAPI, settings) -> None:
         app=app,
         host=settings.host,
         port=settings.port,
-        log_level="info",
+        log_level=str(getattr(settings, "log_level", "INFO")).lower(),
         access_log=True,
+        log_config=None,
     )
     server = uvicorn.Server(config)
     logger.info("Starting webhook server on %s:%s", settings.host, settings.port)
@@ -86,6 +83,7 @@ def _telegram_configured(settings) -> bool:
 
 async def main() -> None:
     settings = get_settings()
+    configure_runtime_logging(settings)
 
     await init_idempotency(settings.state_path)
 

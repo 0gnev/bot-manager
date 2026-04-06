@@ -14,6 +14,7 @@ from aiogram.types import Message, PhotoSize
 
 from bridge.approvals.handler import submit_for_approval
 from bridge.audit import audit_log
+from bridge.bot.filters import StudentBotFilter
 from bridge.bot import registry
 from bridge.clients.openclaw import OpenclawClient
 from bridge.config import Settings
@@ -229,7 +230,7 @@ async def _handle_manual(
 
 # -- Text messages -------------------------------------------------------------
 
-@router.message(F.text)
+@router.message(StudentBotFilter(), F.text)
 async def on_text(message: Message, role: str, settings: Settings) -> None:
     if role != "student":
         return
@@ -367,7 +368,7 @@ def _parse_dt(value: str | None):
 
 # -- Photo messages ------------------------------------------------------------
 
-@router.message(F.photo)
+@router.message(StudentBotFilter(), F.photo)
 async def on_photo(message: Message, role: str, settings: Settings) -> None:
     if role != "student":
         return
