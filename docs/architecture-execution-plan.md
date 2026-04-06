@@ -22,3 +22,4 @@ Source of truth: the compact architecture prompt provided for Bot Manager.
 - [ ] Add retry/backoff policy around outbound Telegram delivery and OpenClaw calls.
 - [ ] Add an explicit emergency-stop/admin control surface beyond raw REST toggles.
 - [ ] Run the automated test suite in the intended Python 3.12 environment and wire it into the normal dev workflow.
+- [ ] Update `uvicorn`/`websockets` to versions that no longer rely on the deprecated legacy websocket API, then remove the resulting system-test warnings.
