@@ -24,6 +24,20 @@ else
   git checkout "${REF}"
 fi
 
+runtime_dirty="$(git status --porcelain -- data/openclaw data/state data/uploads data/audit data/knowledge || true)"
+if [ -n "${runtime_dirty}" ]; then
+  echo "Dirty runtime files detected in the working tree:"
+  printf '%s\n' "${runtime_dirty}"
+  echo "These paths are server-local state and may interfere with deploys."
+fi
+
+tracked_runtime="$(git ls-files data/openclaw data/state data/uploads data/audit data/knowledge || true)"
+if [ -n "${tracked_runtime}" ]; then
+  echo "Tracked runtime files present in this checkout:"
+  printf '%s\n' "${tracked_runtime}"
+  echo "Tracked runtime state should be reviewed if deploys keep seeing local drift."
+fi
+
 if [ "${REF}" = "main" ]; then
   git pull --ff-only origin main
 fi
