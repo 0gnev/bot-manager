@@ -188,12 +188,18 @@ async def _handle_manual(
     tutor_chat_id = getattr(settings, "tutor_chat_id", None)
 
     attendee = booking.get("attendee") or {}
-    student_name = attendee.get("name", "Студент")
-    notice = (
-        f"<b>Сообщение от студента</b> ({context_label})\n"
-        f"Студент: {student_name}\n"
-        f"ID брони: <code>{booking_id}</code>\n\n"
-        f"{student_text}"
+    notice = templates.manual_escalation_notice(
+        context_label=context_label,
+        student_name=attendee.get("name", "Студент"),
+        booking_id=booking_id,
+        question=student_text,
+        event_title=booking.get("title", "Занятие"),
+        start_time=_parse_dt(booking.get("start_time")),
+        student_email=attendee.get("email"),
+        student_phone=attendee.get("phone"),
+        student_telegram=attendee.get("telegram"),
+        student_time_zone=attendee.get("timeZone"),
+        student_telegram_user_id=booking.get("telegram_user_id"),
     )
     sent = await _notify_tutor(settings, booking_id, notice)
     if sent is None:
@@ -347,6 +353,16 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
         booking_id,
         student_text=text,
     )
+
+
+def _parse_dt(value: str | None):
+    if not value:
+        return None
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
 
 
 # -- Photo messages ------------------------------------------------------------

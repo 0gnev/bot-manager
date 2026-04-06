@@ -59,6 +59,11 @@ async def escalate(
         question=question,
         event_title=booking.get("title", "Занятие"),
         start_time=_parse_dt(booking.get("start_time")),
+        student_email=attendee.get("email"),
+        student_phone=attendee.get("phone"),
+        student_telegram=attendee.get("telegram"),
+        student_time_zone=attendee.get("timeZone"),
+        student_telegram_user_id=booking.get("telegram_user_id"),
     )
 
     sent = await owner_bot.send_message(tutor_chat_id, notice)
