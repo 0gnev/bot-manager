@@ -15,6 +15,10 @@ if str(APP_ROOT) not in sys.path:
 
 
 # ── PostgreSQL fixtures ──────────────────────────────────────────────────────
+#
+# Only tests that explicitly request the ``pg_pool`` fixture will trigger a
+# database connection.  Tests that don't need PostgreSQL (policy engine,
+# message routing, etc.) continue to run without any database.
 
 _DEFAULT_DB_URL = "postgresql://bridge:bridge@localhost:5432/bridge_test"
 
@@ -23,14 +27,13 @@ def _get_database_url() -> str:
     return os.environ.get("DATABASE_URL", _DEFAULT_DB_URL)
 
 
-# Single event loop shared across the entire test session.
-# Tests call ``run_async(coro)`` to execute coroutines on this loop.
+# Single event loop shared by all PG-backed tests.
 _loop: asyncio.AbstractEventLoop | None = None
 
 
 def run_async(coro):
     """Run an async coroutine on the shared session event loop."""
-    assert _loop is not None, "Session event loop not initialized"
+    assert _loop is not None, "Session event loop not initialized — request the pg_pool fixture"
     return _loop.run_until_complete(coro)
 
 
@@ -39,9 +42,13 @@ def database_url():
     return _get_database_url()
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def pg_pool(database_url):
-    """Create a pool, run migrations, and yield it for the entire test session."""
+    """Create a pool, run migrations, and yield it for the entire test session.
+
+    This fixture is NOT autouse — only tests that declare ``pg_pool`` in their
+    signature (or use ``db_clean``) will connect to PostgreSQL.
+    """
     global _loop
     import asyncpg
     from bridge.db import pool as pool_mod
@@ -63,9 +70,13 @@ def pg_pool(database_url):
     _loop = None
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture()
 def db_clean(pg_pool):
-    """Truncate all data tables before each test for isolation."""
+    """Truncate all data tables for test isolation.
+
+    Request this fixture (or ``pg_pool``) from any test that writes to the
+    database.  It is NOT autouse so non-DB tests stay fast and dependency-free.
+    """
     async def _truncate():
         async with pg_pool.acquire() as conn:
             await conn.execute("""

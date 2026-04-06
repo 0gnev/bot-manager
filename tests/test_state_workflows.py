@@ -37,7 +37,7 @@ async def _create_booking(booking_id: str = "booking-1", **overrides) -> dict:
 # ── approval tests ───────────────────────────────────────────────────────────
 
 
-def test_approval_state_persists_review_metadata(pg_pool) -> None:
+def test_approval_state_persists_review_metadata(db_clean) -> None:
     async def _run():
         await _create_booking("booking-1")
 
@@ -68,7 +68,7 @@ def test_approval_state_persists_review_metadata(pg_pool) -> None:
 # ── escalation tests ─────────────────────────────────────────────────────────
 
 
-def test_escalation_state_persists_reason_and_resolver(pg_pool) -> None:
+def test_escalation_state_persists_reason_and_resolver(db_clean) -> None:
     async def _run():
         await _create_booking("booking-2")
 
@@ -94,7 +94,7 @@ def test_escalation_state_persists_reason_and_resolver(pg_pool) -> None:
     run_async(_run())
 
 
-def test_multiple_escalations_per_booking(pg_pool) -> None:
+def test_multiple_escalations_per_booking(db_clean) -> None:
     async def _run():
         await _create_booking("booking-multi")
 
@@ -116,7 +116,7 @@ def test_multiple_escalations_per_booking(pg_pool) -> None:
 # ── runtime controls tests ───────────────────────────────────────────────────
 
 
-def test_runtime_controls_persist_global_automation_state(pg_pool) -> None:
+def test_runtime_controls_persist_global_automation_state(db_clean) -> None:
     async def _run():
         initial = await load_controls("")
         updated = await save_controls(
@@ -138,7 +138,7 @@ def test_runtime_controls_persist_global_automation_state(pg_pool) -> None:
 # ── booking tests ────────────────────────────────────────────────────────────
 
 
-def test_booking_save_and_load(pg_pool) -> None:
+def test_booking_save_and_load(db_clean) -> None:
     async def _run():
         await _create_booking("booking-save")
         loaded = await bookings.load("", "booking-save")
@@ -151,7 +151,7 @@ def test_booking_save_and_load(pg_pool) -> None:
     run_async(_run())
 
 
-def test_booking_link_telegram_user(pg_pool) -> None:
+def test_booking_link_telegram_user(db_clean) -> None:
     async def _run():
         await _create_booking("booking-link")
         updated = await bookings.link_telegram_user("", "booking-link", 12345)
@@ -166,7 +166,7 @@ def test_booking_link_telegram_user(pg_pool) -> None:
     run_async(_run())
 
 
-def test_booking_find_by_username(pg_pool) -> None:
+def test_booking_find_by_username(db_clean) -> None:
     async def _run():
         await _create_booking("booking-username")
         found = await bookings.find_by_telegram_username("", "teststudent")
@@ -180,7 +180,7 @@ def test_booking_find_by_username(pg_pool) -> None:
 # ── conversation tests ───────────────────────────────────────────────────────
 
 
-def test_conversation_append_and_load(pg_pool) -> None:
+def test_conversation_append_and_load(db_clean) -> None:
     async def _run():
         await _create_booking("booking-conv")
         await conversations.append("", "booking-conv", "user", "Hello!")
@@ -195,7 +195,7 @@ def test_conversation_append_and_load(pg_pool) -> None:
     run_async(_run())
 
 
-def test_conversation_update_metadata(pg_pool) -> None:
+def test_conversation_update_metadata(db_clean) -> None:
     async def _run():
         await _create_booking("booking-meta")
 

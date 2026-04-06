@@ -16,7 +16,7 @@ class DummyBot:
         self.sent_messages.append((chat_id, text, kwargs))
 
 
-def test_send_student_message_records_history_and_audit(pg_pool) -> None:
+def test_send_student_message_records_history_and_audit(db_clean) -> None:
     settings = SimpleNamespace(state_path="")
     bot = DummyBot()
     audit_events: list[tuple[str, str, dict]] = []
