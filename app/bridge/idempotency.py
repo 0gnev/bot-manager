@@ -1,17 +1,17 @@
 """
 Idempotency store — prevents duplicate processing of webhooks and Telegram updates.
 
-Uses an in-memory dict with TTL for fast lookup.
-Persists to disk (data/state/idempotency.json) for crash recovery.
+Hybrid approach: in-memory dict for hot-path speed, PostgreSQL for durability.
+On startup, loads unexpired keys from PG. Writes go to both memory and PG.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
-from pathlib import Path
+
+from bridge.db import get_pool
 
 logger = logging.getLogger(__name__)
 
@@ -21,51 +21,40 @@ CLEANUP_INTERVAL = 600  # 10 minutes
 # In-memory store: key -> expiry timestamp (wall clock)
 _store: dict[str, float] = {}
 _inflight: set[str] = set()
-_state_path: str | None = None
 _lock = asyncio.Lock()
 
 
-def _file_path() -> Path | None:
-    if _state_path is None:
-        return None
-    return Path(_state_path) / "idempotency.json"
-
-
-async def init(state_path: str) -> None:
-    """Load persisted entries from disk."""
-    global _state_path
-    _state_path = state_path
-    fp = _file_path()
-    if fp is None or not fp.exists():
-        return
-    try:
-        text = await asyncio.to_thread(fp.read_text, "utf-8")
-        data: dict[str, float] = json.loads(text)
-        now = time.time()
-        for key, expiry in data.items():
-            if expiry > now:
-                _store[key] = expiry
-        logger.info("Idempotency store loaded: %d entries", len(_store))
-    except Exception as exc:
-        logger.warning("Failed to load idempotency state: %s", exc)
-
-
-async def _persist() -> None:
-    """Write current entries to disk (absolute expiry timestamps)."""
-    fp = _file_path()
-    if fp is None:
-        return
+async def init(state_path: str = "") -> None:
+    """Load persisted entries from PostgreSQL."""
+    pool = get_pool()
+    rows = await pool.fetch(
+        "SELECT key, expires_at FROM idempotency_keys WHERE expires_at > now()"
+    )
     now = time.time()
-    data = {k: round(exp, 1) for k, exp in _store.items() if exp > now}
+    for row in rows:
+        exp_ts = row["expires_at"].timestamp()
+        if exp_ts > now:
+            _store[row["key"]] = exp_ts
+    logger.info("Idempotency store loaded: %d entries", len(_store))
+
+
+async def _persist_key(key: str, expires_at_ts: float) -> None:
+    """Write a single key to PG (fire-and-forget)."""
     try:
-        fp.parent.mkdir(parents=True, exist_ok=True)
-        await asyncio.to_thread(
-            fp.write_text,
-            json.dumps(data, ensure_ascii=False),
-            "utf-8",
+        from datetime import datetime, timezone
+
+        pool = get_pool()
+        exp_dt = datetime.fromtimestamp(expires_at_ts, tz=timezone.utc)
+        await pool.execute(
+            """
+            INSERT INTO idempotency_keys (key, expires_at) VALUES ($1, $2)
+            ON CONFLICT (key) DO UPDATE SET expires_at = EXCLUDED.expires_at
+            """,
+            key,
+            exp_dt,
         )
     except Exception as exc:
-        logger.warning("Failed to persist idempotency state: %s", exc)
+        logger.warning("Failed to persist idempotency key %s: %s", key, exc)
 
 
 async def is_duplicate(key: str) -> bool:
@@ -81,8 +70,9 @@ async def is_duplicate(key: str) -> bool:
 
 async def mark_processed(key: str, ttl: float = DEFAULT_TTL) -> None:
     """Record that this key has been processed."""
-    _store[key] = time.time() + ttl
-    asyncio.create_task(_persist())
+    exp = time.time() + ttl
+    _store[key] = exp
+    asyncio.create_task(_persist_key(key, exp))
 
 
 async def begin_processing(key: str) -> bool:
@@ -98,8 +88,9 @@ async def finish_processing(key: str, ttl: float = DEFAULT_TTL) -> None:
     """Mark a claimed key as processed and release its in-flight claim."""
     async with _lock:
         _inflight.discard(key)
-        _store[key] = time.time() + ttl
-    asyncio.create_task(_persist())
+        exp = time.time() + ttl
+        _store[key] = exp
+    asyncio.create_task(_persist_key(key, exp))
 
 
 async def abandon_processing(key: str) -> None:
@@ -113,20 +104,25 @@ async def check_and_mark(key: str, ttl: float = DEFAULT_TTL) -> bool:
     async with _lock:
         if key in _inflight or await is_duplicate(key):
             return True
-        _store[key] = time.time() + ttl
-    asyncio.create_task(_persist())
+        exp = time.time() + ttl
+        _store[key] = exp
+    asyncio.create_task(_persist_key(key, exp))
     return False
 
 
 async def cleanup_expired() -> None:
-    """Remove entries older than their TTL."""
+    """Remove expired entries from memory and PG."""
     now = time.time()
     expired = [k for k, exp in _store.items() if now > exp]
     for k in expired:
         del _store[k]
     if expired:
-        logger.debug("Idempotency cleanup: removed %d expired entries", len(expired))
-        await _persist()
+        logger.debug("Idempotency cleanup: removed %d expired entries from memory", len(expired))
+    try:
+        pool = get_pool()
+        await pool.execute("DELETE FROM idempotency_keys WHERE expires_at < now()")
+    except Exception as exc:
+        logger.warning("Failed to clean up idempotency keys in PG: %s", exc)
 
 
 async def run_cleanup_loop() -> None:

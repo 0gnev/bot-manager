@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 
+from conftest import run_async
+
 from bridge.delivery.service import send_student_message
-from bridge.state import conversations
+from bridge.state import bookings, conversations
 
 
 class DummyBot:
@@ -15,9 +16,8 @@ class DummyBot:
         self.sent_messages.append((chat_id, text, kwargs))
 
 
-def test_send_student_message_records_history_and_audit(tmp_path) -> None:
-    state_path = tmp_path / "state"
-    settings = SimpleNamespace(state_path=str(state_path))
+def test_send_student_message_records_history_and_audit(pg_pool) -> None:
+    settings = SimpleNamespace(state_path="")
     bot = DummyBot()
     audit_events: list[tuple[str, str, dict]] = []
 
@@ -30,8 +30,16 @@ def test_send_student_message_records_history_and_audit(tmp_path) -> None:
     service.audit_log = fake_audit_log
     delivery_pkg.send_student_message  # keep import live for module initialization
 
-    result = asyncio.run(
-        send_student_message(
+    async def _run():
+        # Create booking first (conversations.append requires it)
+        await bookings.save("", "booking-1", {
+            "booking_id": "booking-1",
+            "status": "active",
+            "title": "Test",
+            "attendee": {"name": "Student", "email": "s@test.com"},
+        })
+
+        result = await send_student_message(
             bot=bot,
             chat_id=42,
             text="Привет!",
@@ -39,24 +47,25 @@ def test_send_student_message_records_history_and_audit(tmp_path) -> None:
             settings=settings,
             source="test",
         )
-    )
 
-    assert result is True
-    assert bot.sent_messages == [(42, "Привет!", {})]
+        assert result is True
+        assert bot.sent_messages == [(42, "Привет!", {})]
 
-    history = asyncio.run(conversations.load(str(state_path), "booking-1"))
-    assert len(history) == 1
-    assert history[0]["role"] == "assistant"
-    assert history[0]["content"] == "Привет!"
+        history = await conversations.load("", "booking-1")
+        assert len(history) == 1
+        assert history[0]["role"] == "assistant"
+        assert history[0]["content"] == "Привет!"
 
-    assert audit_events == [
-        (
-            "delivery",
-            "student_message_sent",
-            {
-                "booking_id": "booking-1",
-                "actor": "system",
-                "detail": {"source": "test", "chat_id": 42},
-            },
-        )
-    ]
+        assert audit_events == [
+            (
+                "delivery",
+                "student_message_sent",
+                {
+                    "booking_id": "booking-1",
+                    "actor": "system",
+                    "detail": {"source": "test", "chat_id": 42},
+                },
+            )
+        ]
+
+    run_async(_run())

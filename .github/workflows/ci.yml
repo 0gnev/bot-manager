@@ -8,6 +8,20 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: bridge_test
+          POSTGRES_USER: bridge
+          POSTGRES_PASSWORD: bridge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bridge"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -27,6 +41,7 @@ jobs:
       - name: Run test suite
         env:
           PYTHONPATH: app
+          DATABASE_URL: postgresql://bridge:bridge@localhost:5432/bridge_test
         run: python -m pytest -q
 
   build-bridge-image:

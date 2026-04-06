@@ -1,19 +1,17 @@
 """
-Runtime automation controls persisted outside per-chat conversation history.
+Runtime automation controls — persisted in PostgreSQL.
 
-Layout: {state_path}/runtime_controls.json
+Table: runtime_controls (singleton row, id=1).
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
+import logging
 from datetime import datetime, timezone
-from pathlib import Path
 
+from bridge.db import get_pool
 
-def _runtime_path(state_path: str) -> Path:
-    return Path(state_path) / "runtime_controls.json"
+logger = logging.getLogger(__name__)
 
 
 def _default_controls() -> dict:
@@ -26,35 +24,47 @@ def _default_controls() -> dict:
     }
 
 
-async def load_controls(state_path: str) -> dict:
-    path = _runtime_path(state_path)
-    if not path.exists():
+async def load_controls(state_path: str = "") -> dict:
+    pool = get_pool()
+    row = await pool.fetchrow("SELECT * FROM runtime_controls WHERE id = 1")
+    if row is None:
         return _default_controls()
-    text = await asyncio.to_thread(path.read_text, encoding="utf-8")
-    data = json.loads(text)
-    defaults = _default_controls()
-    defaults.update(data)
-    return defaults
+    return {
+        "global_automation_enabled": row["global_automation_enabled"],
+        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        "updated_by": row["updated_by"],
+        "reason": row["reason"],
+    }
 
 
 async def save_controls(
-    state_path: str,
+    state_path: str = "",
     *,
     global_automation_enabled: bool,
     updated_by: str,
     reason: str | None = None,
 ) -> dict:
-    data = {
-        "global_automation_enabled": global_automation_enabled,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-        "updated_by": updated_by,
-        "reason": reason,
-    }
-    path = _runtime_path(state_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    await asyncio.to_thread(
-        path.write_text,
-        json.dumps(data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    pool = get_pool()
+    row = await pool.fetchrow(
+        """
+        UPDATE runtime_controls
+        SET global_automation_enabled = $1,
+            updated_at = now(),
+            updated_by = $2,
+            reason = $3
+        WHERE id = 1
+        RETURNING *
+        """,
+        global_automation_enabled,
+        updated_by,
+        reason,
     )
-    return data
+    if row is None:
+        # Shouldn't happen — migration inserts the singleton row
+        return _default_controls()
+    return {
+        "global_automation_enabled": row["global_automation_enabled"],
+        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        "updated_by": row["updated_by"],
+        "reason": row["reason"],
+    }

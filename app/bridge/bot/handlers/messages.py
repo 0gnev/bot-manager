@@ -468,6 +468,23 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
     local_path = str(upload_dir / f"{photo.file_id}.jpg")
     await message.bot.download_file(file.file_path, destination=local_path)
 
+    # Record attachment metadata
+    try:
+        from bridge.db import get_pool
+        pool = get_pool()
+        await pool.execute(
+            """
+            INSERT INTO attachments (booking_id, file_id, file_type, mime_type, local_path, caption)
+            VALUES ($1, $2, 'photo', 'image/jpeg', $3, $4)
+            """,
+            booking_id,
+            photo.file_id,
+            local_path,
+            caption or None,
+        )
+    except Exception as exc:
+        logger.warning("Failed to record attachment metadata: %s", exc)
+
     history = await conversations.load(settings.state_path, booking_id)
     knowledge = await knowledge_search(settings.knowledge_path, caption, limit=3) if caption else []
     client = OpenclawClient(settings)
