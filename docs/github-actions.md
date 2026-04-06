@@ -28,16 +28,19 @@ That script:
 
 1. fetches the latest Git refs
 2. checks out `main`
-3. updates the Python virtualenv
-4. runs `pytest` on the server
-5. runs `docker compose --env-file .env up -d --build --force-recreate`
+3. runs `docker compose --env-file .env up -d --build --force-recreate`
+4. waits for `bridge` to report healthy on `http://127.0.0.1:8081/health`
+5. prints recent `bridge` logs and fails if health never comes up
 
 The `--force-recreate` flag is important here because `bridge` uses bind mounts for
 `app/` and `config/`. A plain `up -d --build` can leave the existing container
 running with the old Python process, while `--force-recreate` guarantees that the
 deployed code is actually picked up.
 
-If tests fail on the server, deployment stops before containers are recreated.
+`pytest` runs in `CI`, where the workflow provisions a dedicated PostgreSQL test
+service. `CD` no longer re-runs the full test suite on the production server,
+because the PostgreSQL-backed tests require separate test infrastructure and were
+causing deploys to fail before container recreation.
 
 ## Recommended GitHub environment setup
 
