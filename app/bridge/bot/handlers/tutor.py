@@ -254,7 +254,6 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         current_stage="tutor_reply_sent",
         status="active",
         assigned_human="tutor",
-        automation_enabled=False,
     )
     await message.answer(templates.tutor_answer_sent())
     logger.info("Tutor reply routed: booking=%s -> student=%s", booking_id, student_id)

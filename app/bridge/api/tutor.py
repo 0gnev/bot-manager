@@ -329,7 +329,6 @@ async def tutor_reply(
         current_stage="tutor_reply_sent",
         status="active",
         assigned_human="tutor",
-        automation_enabled=False,
     )
     await audit_log(
         "escalation", "resolved",

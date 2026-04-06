@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from bridge.bot.handlers import messages, tutor
 from bridge.bot.filters import StudentBotFilter, TutorBotFilter
 from bridge.bot import registry
+from bridge.escalation import handler as escalation_handler
 from bridge.state import OperatingMode
 from telegram_adapter import templates
 
@@ -336,6 +337,100 @@ def test_tutor_reply_routes_contact_only_escalation(monkeypatch) -> None:
     assert delivered["contact_id"] == 7
     assert delivered["booking_id"] is None
     assert message.answers == [templates.tutor_answer_sent()]
+
+
+def test_escalation_keeps_contact_automation_enabled(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state", tutor_chat_id=123)
+    message = DummyStudentMessage("Нужен преподаватель")
+    metadata_updates: list[dict] = []
+
+    class FakeOwnerBot:
+        async def send_message(self, chat_id: int, text: str):
+            return SimpleNamespace(message_id=555)
+
+    async def fake_create(*args, **kwargs):
+        return {"escalation_id": 1}
+
+    async def fake_update_metadata(*args, **kwargs):
+        metadata_updates.append(kwargs)
+        return None
+
+    async def fake_audit_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(escalation_handler.registry, "get_owner", lambda: FakeOwnerBot())
+    monkeypatch.setattr(escalation_handler.escalations, "create", fake_create)
+    monkeypatch.setattr(escalation_handler.conversations, "update_metadata", fake_update_metadata)
+    monkeypatch.setattr(escalation_handler, "audit_log", fake_audit_log)
+
+    asyncio.run(
+        escalation_handler.escalate(
+            message,
+            None,
+            {"id": 7, "name": "Ivan Petrov", "telegram_user_id": 321},
+            "Нужен преподаватель",
+            settings,
+        )
+    )
+
+    assert metadata_updates
+    assert metadata_updates[0]["contact_id"] == 7
+    assert metadata_updates[0]["current_stage"] == "awaiting_tutor_reply"
+    assert "automation_enabled" not in metadata_updates[0]
+
+
+def test_tutor_reply_keeps_contact_automation_enabled(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    reply_to_message = SimpleNamespace(
+        message_id=400,
+        text="Сообщение от студента без записи",
+        html_text=None,
+        caption=None,
+    )
+    message = DummyMessage(text="Ответ без брони", reply_to_message=reply_to_message)
+    metadata_updates: list[dict] = []
+
+    async def fake_find_pending_by_tutor_message(*args, **kwargs):
+        return {"booking_id": None, "contact_id": 7, "status": "pending", "escalation_id": 55}
+
+    async def fake_load_contact(*args, **kwargs):
+        return {"id": 7, "telegram_user_id": 900}
+
+    async def fake_send_student_message(**kwargs) -> bool:
+        return True
+
+    async def fake_update_metadata(*args, **kwargs) -> None:
+        metadata_updates.append(kwargs)
+        return None
+
+    async def fake_audit_log(*args, **kwargs) -> None:
+        return None
+
+    async def fake_resolve_by_id(*args, **kwargs):
+        return {"booking_id": None, "contact_id": 7, "status": "resolved", "escalation_id": 55}
+
+    async def fake_no_booking(*args, **kwargs):
+        return None
+
+    async def fake_no_approval(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(tutor.approvals, "find_pending_by_tutor_message", fake_no_approval)
+    monkeypatch.setattr(tutor.escalations, "find_pending_by_tutor_message", fake_find_pending_by_tutor_message)
+    monkeypatch.setattr(tutor.contacts, "load", fake_load_contact)
+    monkeypatch.setattr(tutor.bookings, "load", fake_no_booking)
+    monkeypatch.setattr(tutor, "send_student_message", fake_send_student_message)
+    monkeypatch.setattr(tutor.conversations, "update_metadata", fake_update_metadata)
+    monkeypatch.setattr(tutor, "audit_log", fake_audit_log)
+    monkeypatch.setattr(tutor.escalations, "resolve_by_id", fake_resolve_by_id)
+    monkeypatch.setattr(tutor.registry, "get_student", lambda: object())
+
+    asyncio.run(tutor.on_tutor_reply(message, "tutor", settings))
+
+    assert metadata_updates
+    assert metadata_updates[0]["contact_id"] == 7
+    assert metadata_updates[0]["current_stage"] == "tutor_reply_sent"
+    assert "automation_enabled" not in metadata_updates[0]
 
 
 def test_manual_escalation_notice_includes_student_details() -> None:
