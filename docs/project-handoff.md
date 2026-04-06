@@ -122,16 +122,20 @@ That script:
 1. marks the repo path as a safe Git directory
 2. fetches refs and checks out the requested branch
 3. pulls `main`
-4. creates/updates `.venv`
-5. installs Python dependencies
-6. runs `pytest`
-7. runs `docker compose --env-file .env up -d --build --force-recreate`
+4. runs `docker compose --env-file .env up -d --build --force-recreate`
+5. waits for `bridge` to become healthy on `http://127.0.0.1:8081/health`
+6. prints recent `bridge` logs and fails if startup never becomes healthy
 
 Relevant files:
 
 - [scripts/deploy-server.sh](/private/var/www/bot-manager/scripts/deploy-server.sh)
 - [.github/workflows/cd.yml](/private/var/www/bot-manager/.github/workflows/cd.yml)
 - [docs/github-actions.md](/private/var/www/bot-manager/docs/github-actions.md)
+
+`pytest` remains part of `CI`, not `CD`. This matters after the PostgreSQL
+migration because the state-backed tests require a dedicated test database.
+Running them directly on the production server caused deploy failures when no
+local PostgreSQL test instance was available.
 
 ### Why `--force-recreate` is required
 

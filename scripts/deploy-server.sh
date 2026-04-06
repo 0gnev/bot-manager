@@ -28,16 +28,20 @@ if [ "${REF}" = "main" ]; then
   git pull --ff-only origin main
 fi
 
-if [ ! -d .venv ]; then
-  python3 -m venv .venv
-fi
-
-. .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements-dev.txt
-python -m pytest
-
 # Bind-mounted app/config files do not always trigger container recreation.
 # Force a recreate so the running bot process always picks up the latest code.
 docker compose --env-file .env up -d --build --force-recreate
 docker compose --env-file .env ps
+
+echo "Waiting for bridge healthcheck..."
+for i in $(seq 1 30); do
+  if curl -fsS http://127.0.0.1:8081/health >/dev/null; then
+    echo "Bridge is healthy"
+    exit 0
+  fi
+  sleep 2
+done
+
+echo "Bridge did not become healthy in time"
+docker compose --env-file .env logs --tail=200 bridge || true
+exit 1
