@@ -184,3 +184,98 @@ def test_tutor_reply_supports_contact_only_escalation(monkeypatch) -> None:
     assert response.booking_id is None
     assert delivered["contact_id"] == 91
     assert delivered["chat_id"] == 555
+
+
+def test_set_contact_chat_mode_updates_contact_scoped_chat(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    saved: dict[str, object] = {}
+    audited: dict[str, object] = {}
+    chat = SimpleNamespace(
+        mode=tutor_api.OperatingMode.AUTO,
+        draft={"text": "pending"},
+        automation_enabled=True,
+        status="active",
+        current_stage="new",
+        assigned_human=None,
+    )
+
+    async def fake_load_contact(*args, **kwargs) -> dict:
+        return {"id": 91, "name": "Ivan Petrov"}
+
+    async def fake_load_chat_by_contact(*args, **kwargs):
+        return chat
+
+    async def fake_save_chat(*args, **kwargs) -> None:
+        saved["chat"] = chat
+
+    async def fake_audit_log(*args, **kwargs) -> None:
+        audited.update(kwargs)
+
+    monkeypatch.setattr(tutor_api.contacts, "load", fake_load_contact)
+    monkeypatch.setattr(tutor_api.conversations, "load_chat_by_contact", fake_load_chat_by_contact)
+    monkeypatch.setattr(tutor_api.conversations, "save_chat", fake_save_chat)
+    monkeypatch.setattr(tutor_api, "audit_log", fake_audit_log)
+
+    response = asyncio.run(
+        tutor_api.set_contact_chat_mode(
+            91,
+            tutor_api.ModeRequest(mode=tutor_api.OperatingMode.MANUAL),
+            settings,
+        )
+    )
+
+    assert response["ok"] is True
+    assert response["contact_id"] == 91
+    assert response["mode"] == "manual"
+    assert saved["chat"].mode == tutor_api.OperatingMode.MANUAL
+    assert saved["chat"].automation_enabled is False
+    assert saved["chat"].assigned_human == "tutor"
+    assert audited["detail"]["contact_id"] == 91
+
+
+def test_set_contact_chat_automation_updates_contact_scoped_chat(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    saved: dict[str, object] = {}
+    audited: dict[str, object] = {}
+    chat = SimpleNamespace(
+        mode=tutor_api.OperatingMode.MANUAL,
+        draft=None,
+        automation_enabled=False,
+        status="manual_takeover",
+        current_stage="manual_takeover",
+        assigned_human="tutor",
+        escalation_reason="manual_mode",
+    )
+
+    async def fake_load_contact(*args, **kwargs) -> dict:
+        return {"id": 91, "name": "Ivan Petrov"}
+
+    async def fake_load_chat_by_contact(*args, **kwargs):
+        return chat
+
+    async def fake_save_chat(*args, **kwargs) -> None:
+        saved["chat"] = chat
+
+    async def fake_audit_log(*args, **kwargs) -> None:
+        audited.update(kwargs)
+
+    monkeypatch.setattr(tutor_api.contacts, "load", fake_load_contact)
+    monkeypatch.setattr(tutor_api.conversations, "load_chat_by_contact", fake_load_chat_by_contact)
+    monkeypatch.setattr(tutor_api.conversations, "save_chat", fake_save_chat)
+    monkeypatch.setattr(tutor_api, "audit_log", fake_audit_log)
+
+    response = asyncio.run(
+        tutor_api.set_contact_chat_automation(
+            91,
+            tutor_api.ChatAutomationRequest(enabled=True),
+            settings,
+        )
+    )
+
+    assert response["ok"] is True
+    assert response["contact_id"] == 91
+    assert response["automation_enabled"] is True
+    assert saved["chat"].mode == tutor_api.OperatingMode.SEMI_AUTO
+    assert saved["chat"].assigned_human is None
+    assert saved["chat"].escalation_reason is None
+    assert audited["detail"]["contact_id"] == 91

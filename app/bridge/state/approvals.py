@@ -33,7 +33,9 @@ def _row_to_dict(row) -> dict:
 
 async def create_approval(
     state_path: str,
-    booking_id: str,
+    booking_id: str | None,
+    *,
+    contact_id: int | None = None,
     student_chat_id: int,
     draft_content: str,
     action: str,
@@ -44,19 +46,25 @@ async def create_approval(
     row = await pool.fetchrow(
         """
         INSERT INTO approvals (
-            approval_id, booking_id, student_chat_id, draft_content,
-            action, confidence
-        ) VALUES ($1, $2, $3, $4, $5, $6)
+            approval_id, booking_id, contact_id, student_chat_id,
+            draft_content, action, confidence
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
         """,
         approval_id,
         booking_id,
+        contact_id,
         student_chat_id,
         draft_content,
         action,
         confidence,
     )
-    logger.info("Created approval %s for booking %s", approval_id, booking_id)
+    logger.info(
+        "Created approval %s for booking=%s contact=%s",
+        approval_id,
+        booking_id,
+        contact_id,
+    )
     return _row_to_dict(row)
 
 
@@ -114,7 +122,10 @@ async def set_tutor_message_id(
 
 
 async def list_pending(
-    state_path: str, booking_id: str | None = None
+    state_path: str,
+    booking_id: str | None = None,
+    *,
+    contact_id: int | None = None,
 ) -> list[dict]:
     pool = get_pool()
     if booking_id:
@@ -125,6 +136,15 @@ async def list_pending(
             ORDER BY created_at
             """,
             booking_id,
+        )
+    elif contact_id is not None:
+        rows = await pool.fetch(
+            """
+            SELECT * FROM approvals
+            WHERE status = 'pending' AND contact_id = $1
+            ORDER BY created_at
+            """,
+            contact_id,
         )
     else:
         rows = await pool.fetch(

@@ -138,6 +138,69 @@ def test_student_message_without_booking_routes_via_contact(monkeypatch) -> None
     assert delivered["text"] == "Да, конечно."
 
 
+def test_semi_auto_without_booking_submits_contact_only_approval(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        state_path="/tmp/state",
+        knowledge_path="/tmp/knowledge",
+        tutor_chat_id=1,
+    )
+    message = DummyStudentMessage("Можно ли перенести тему занятия?")
+    submitted: dict[str, object] = {}
+
+    async def fake_resolve_contact_context(*args, **kwargs):
+        return ({"id": 41, "name": "Ivan Petrov"}, None, [])
+
+    async def fake_append(*args, **kwargs):
+        return None
+
+    async def fake_load_chat_by_contact(*args, **kwargs):
+        return SimpleNamespace(mode=OperatingMode.SEMI_AUTO, automation_enabled=True)
+
+    async def fake_update_metadata(*args, **kwargs):
+        return SimpleNamespace(mode=OperatingMode.SEMI_AUTO, automation_enabled=True)
+
+    async def fake_load(*args, **kwargs):
+        return [{"role": "user", "content": "Можно ли перенести тему занятия?"}]
+
+    async def fake_load_controls(*args, **kwargs):
+        return {"global_automation_enabled": True}
+
+    async def fake_search(*args, **kwargs):
+        return []
+
+    async def fake_submit_for_approval(**kwargs):
+        submitted.update(kwargs)
+        return {"approval_id": "appr-1"}
+
+    async def fake_audit_log(*args, **kwargs):
+        return None
+
+    class FakeClient:
+        def __init__(self, settings_obj) -> None:
+            self.settings = settings_obj
+
+        async def chat(self, **kwargs):
+            return {"action": "answer", "content": "Да, можно обсудить перенос.", "confidence": 0.75}
+
+    monkeypatch.setattr(messages, "_resolve_contact_context", fake_resolve_contact_context)
+    monkeypatch.setattr(messages.conversations, "append", fake_append)
+    monkeypatch.setattr(messages.conversations, "load_chat_by_contact", fake_load_chat_by_contact)
+    monkeypatch.setattr(messages.conversations, "update_metadata", fake_update_metadata)
+    monkeypatch.setattr(messages.conversations, "load", fake_load)
+    monkeypatch.setattr(messages, "load_controls", fake_load_controls)
+    monkeypatch.setattr(messages, "knowledge_search", fake_search)
+    monkeypatch.setattr(messages, "submit_for_approval", fake_submit_for_approval)
+    monkeypatch.setattr(messages, "audit_log", fake_audit_log)
+    monkeypatch.setattr(messages, "OpenclawClient", FakeClient)
+
+    asyncio.run(messages.on_text(message, "student", settings))
+
+    assert submitted["booking_id"] is None
+    assert submitted["contact_id"] == 41
+    assert submitted["student_chat_id"] == 321
+    assert message.answers == ["Ваш преподаватель проверит ответ и отправит его вручную."]
+
+
 def test_tutor_reply_reports_unmatched_escalation(monkeypatch) -> None:
     settings = SimpleNamespace(state_path="/tmp/state")
     reply_to_message = SimpleNamespace(

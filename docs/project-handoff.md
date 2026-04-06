@@ -38,6 +38,22 @@ The intended architecture is:
 - `bridge`: the main Bot Manager service
 - `openclaw`: AI gateway used by Bridge
 
+### Conversation ownership model
+
+Current runtime behavior is contact-first:
+
+- a Telegram student is represented by `contacts`
+- chat metadata lives on `contacts` when a contact exists
+- `bookings` are optional context attached to messages, escalations, and approvals
+- students can talk to the bot without an existing booking
+- tutor controls are available both for booking-scoped chats and directly for contact-scoped chats
+
+Why this matters:
+
+- do not assume every inbound student message has a valid `booking_id`
+- contact-only questions can still create escalations and approvals
+- API and state changes must preserve both `contact_id` and optional `booking_id`
+
 ### Telegram ownership model
 
 Current intended routing:
