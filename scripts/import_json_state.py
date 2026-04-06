@@ -12,7 +12,7 @@ Reads:
   {state_path}/runtime_controls.json
   {state_path}/idempotency.json
 
-Idempotent: uses ON CONFLICT to skip already-imported records.
+Idempotent: skips already-imported records so the backfill can be rerun safely.
 """
 
 from __future__ import annotations
@@ -40,6 +40,81 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
 
 
+async def _upsert_contact_from_attendee(
+    conn: asyncpg.Connection,
+    attendee: dict,
+    telegram_user_id: int | None,
+) -> int | None:
+    telegram_username = (attendee.get("telegram") or "").lstrip("@") or None
+    email = attendee.get("email")
+
+    if not telegram_user_id and not telegram_username and not email:
+        return None
+
+    contact_id = None
+    if telegram_user_id:
+        row = await conn.fetchrow(
+            "SELECT id FROM contacts WHERE telegram_user_id = $1",
+            telegram_user_id,
+        )
+        if row:
+            contact_id = row["id"]
+
+    if contact_id is None and telegram_username:
+        row = await conn.fetchrow(
+            "SELECT id FROM contacts WHERE lower(telegram_username) = lower($1)",
+            telegram_username,
+        )
+        if row:
+            contact_id = row["id"]
+
+    if contact_id is None and email:
+        row = await conn.fetchrow(
+            "SELECT id FROM contacts WHERE lower(email) = lower($1)",
+            email,
+        )
+        if row:
+            contact_id = row["id"]
+
+    if contact_id is not None:
+        await conn.execute(
+            """
+            UPDATE contacts
+            SET telegram_user_id = COALESCE($2, telegram_user_id),
+                telegram_username = COALESCE($3, telegram_username),
+                name = COALESCE($4, name),
+                email = COALESCE($5, email),
+                phone = COALESCE($6, phone),
+                time_zone = COALESCE($7, time_zone),
+                updated_at = now()
+            WHERE id = $1
+            """,
+            contact_id,
+            telegram_user_id,
+            telegram_username,
+            attendee.get("name"),
+            email,
+            attendee.get("phone"),
+            attendee.get("timeZone"),
+        )
+        return contact_id
+
+    row = await conn.fetchrow(
+        """
+        INSERT INTO contacts (telegram_user_id, telegram_username, name, email, phone, time_zone)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id
+        """,
+        telegram_user_id,
+        telegram_username,
+        attendee.get("name"),
+        email,
+        attendee.get("phone"),
+        attendee.get("timeZone"),
+    )
+    return row["id"]
+
+
 async def import_bookings(conn: asyncpg.Connection, state_path: Path) -> int:
     bookings_dir = state_path / "bookings"
     if not bookings_dir.exists():
@@ -56,32 +131,8 @@ async def import_bookings(conn: asyncpg.Connection, state_path: Path) -> int:
         booking_id = data.get("booking_id", path.stem)
         attendee = data.get("attendee") or {}
         telegram_user_id = data.get("telegram_user_id")
-        telegram_username = (attendee.get("telegram") or "").lstrip("@") or None
 
-        # Upsert contact
-        contact_id = None
-        if telegram_user_id or telegram_username or attendee.get("email"):
-            row = await conn.fetchrow(
-                """
-                INSERT INTO contacts (telegram_user_id, telegram_username, name, email, phone, time_zone)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT (telegram_user_id) DO UPDATE SET
-                    telegram_username = COALESCE(EXCLUDED.telegram_username, contacts.telegram_username),
-                    name = COALESCE(EXCLUDED.name, contacts.name),
-                    email = COALESCE(EXCLUDED.email, contacts.email),
-                    phone = COALESCE(EXCLUDED.phone, contacts.phone),
-                    time_zone = COALESCE(EXCLUDED.time_zone, contacts.time_zone),
-                    updated_at = now()
-                RETURNING id
-                """,
-                telegram_user_id,
-                telegram_username,
-                attendee.get("name"),
-                attendee.get("email"),
-                attendee.get("phone"),
-                attendee.get("timeZone"),
-            )
-            contact_id = row["id"]
+        contact_id = await _upsert_contact_from_attendee(conn, attendee, telegram_user_id)
 
         await conn.execute(
             """
@@ -116,6 +167,23 @@ async def import_bookings(conn: asyncpg.Connection, state_path: Path) -> int:
             _parse_dt(data.get("updated_at")) or datetime.now(timezone.utc),
         )
         count += 1
+
+    await conn.execute(
+        """
+        WITH latest AS (
+            SELECT DISTINCT ON (contact_id) contact_id, booking_id
+            FROM bookings
+            WHERE contact_id IS NOT NULL AND status = 'active'
+            ORDER BY contact_id, updated_at DESC, created_at DESC
+        )
+        UPDATE contacts c
+        SET active_booking_id = latest.booking_id,
+            updated_at = now()
+        FROM latest
+        WHERE c.id = latest.contact_id
+          AND c.active_booking_id IS NULL
+        """
+    )
 
     logger.info("Imported %d bookings", count)
     return count
@@ -185,11 +253,30 @@ async def import_conversations(conn: asyncpg.Connection, state_path: Path) -> in
         # Insert messages
         for msg in messages:
             ts = _parse_dt(msg.get("ts")) or datetime.now(timezone.utc)
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            exists = await conn.fetchval(
+                """
+                SELECT 1
+                FROM messages
+                WHERE booking_id = $1
+                  AND role = $2
+                  AND content = $3
+                  AND created_at = $4
+                LIMIT 1
+                """,
+                booking_id,
+                role,
+                content,
+                ts,
+            )
+            if exists:
+                continue
             await conn.execute(
                 "INSERT INTO messages (booking_id, role, content, created_at) VALUES ($1, $2, $3, $4)",
                 booking_id,
-                msg.get("role", "user"),
-                msg.get("content", ""),
+                role,
+                content,
                 ts,
             )
         count += 1
@@ -219,6 +306,42 @@ async def import_escalations(conn: asyncpg.Connection, state_path: Path) -> int:
             logger.warning("Skipping escalation %s: booking not found", booking_id)
             continue
 
+        status = data.get("status", "pending")
+        reason = data.get("reason")
+        question = data.get("question", "")
+        tutor_message_id = data.get("tutor_message_id")
+        tutor_reply = data.get("tutor_reply")
+        resolved_by = data.get("resolved_by")
+        created_at = _parse_dt(data.get("created_at")) or datetime.now(timezone.utc)
+        resolved_at = _parse_dt(data.get("resolved_at"))
+        exists = await conn.fetchval(
+            """
+            SELECT 1
+            FROM escalations
+            WHERE booking_id = $1
+              AND status = $2
+              AND reason IS NOT DISTINCT FROM $3
+              AND question = $4
+              AND tutor_message_id IS NOT DISTINCT FROM $5
+              AND tutor_reply IS NOT DISTINCT FROM $6
+              AND resolved_by IS NOT DISTINCT FROM $7
+              AND created_at = $8
+              AND resolved_at IS NOT DISTINCT FROM $9
+            LIMIT 1
+            """,
+            booking_id,
+            status,
+            reason,
+            question,
+            tutor_message_id,
+            tutor_reply,
+            resolved_by,
+            created_at,
+            resolved_at,
+        )
+        if exists:
+            continue
+
         await conn.execute(
             """
             INSERT INTO escalations (
@@ -227,14 +350,14 @@ async def import_escalations(conn: asyncpg.Connection, state_path: Path) -> int:
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             """,
             booking_id,
-            data.get("status", "pending"),
-            data.get("reason"),
-            data.get("question", ""),
-            data.get("tutor_message_id"),
-            data.get("tutor_reply"),
-            data.get("resolved_by"),
-            _parse_dt(data.get("created_at")) or datetime.now(timezone.utc),
-            _parse_dt(data.get("resolved_at")),
+            status,
+            reason,
+            question,
+            tutor_message_id,
+            tutor_reply,
+            resolved_by,
+            created_at,
+            resolved_at,
         )
         count += 1
 

@@ -46,14 +46,25 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
         # No deeplink — try matching by Telegram username
         username = message.from_user.username
         if username:
-            booking = await bookings.find_by_telegram_username(
+            username_matches = await bookings.find_all_by_telegram_username(
                 settings.state_path, username
             )
+            if len(username_matches) > 1:
+                await message.answer(_multiple_bookings_notice(username_matches))
+                return
+            booking = username_matches[0] if username_matches else None
         if booking is None:
             # Also check if already linked by user ID
             booking = await bookings.find_by_telegram_user(
                 settings.state_path, message.from_user.id
             )
+            if booking is None:
+                linked_bookings = await bookings.find_all_by_telegram_user(
+                    settings.state_path, message.from_user.id
+                )
+                if linked_bookings:
+                    await message.answer(_multiple_bookings_notice(linked_bookings))
+                    return
         if booking is None:
             await message.answer(
                 "Привет! Не нашёл вашу запись. "
@@ -64,6 +75,9 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
     booking_id = booking["booking_id"]
 
     if booking.get("telegram_user_id") == message.from_user.id:
+        booking = await bookings.link_telegram_user(
+            settings.state_path, booking_id, message.from_user.id
+        ) or booking
         await message.answer(templates.already_linked())
         return
 
@@ -121,3 +135,15 @@ def _parse_dt(value: str | None):
         return datetime.fromisoformat(value)
     except Exception:
         return None
+
+
+def _multiple_bookings_notice(bookings_list: list[dict]) -> str:
+    prepared = []
+    for booking in bookings_list:
+        prepared.append(
+            {
+                **booking,
+                "start_time_label": templates.fmt_dt(_parse_dt(booking.get("start_time"))),
+            }
+        )
+    return templates.multiple_bookings_found(prepared)

@@ -228,6 +228,24 @@ async def _handle_manual(
     )
 
 
+async def _resolve_booking_or_prompt(message: Message, settings: Settings) -> dict | None:
+    booking = await bookings.find_by_telegram_user(
+        settings.state_path, message.from_user.id
+    )
+    if booking is not None:
+        return booking
+
+    linked_bookings = await bookings.find_all_by_telegram_user(
+        settings.state_path, message.from_user.id
+    )
+    if linked_bookings:
+        await message.answer(_multiple_bookings_notice(linked_bookings))
+        return None
+
+    await message.answer(templates.booking_not_found())
+    return None
+
+
 # -- Text messages -------------------------------------------------------------
 
 @router.message(StudentBotFilter(), F.text)
@@ -235,11 +253,8 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
     if role != "student":
         return
 
-    booking = await bookings.find_by_telegram_user(
-        settings.state_path, message.from_user.id
-    )
+    booking = await _resolve_booking_or_prompt(message, settings)
     if not booking:
-        await message.answer(templates.booking_not_found())
         return
 
     booking_id = booking["booking_id"]
@@ -366,6 +381,18 @@ def _parse_dt(value: str | None):
         return None
 
 
+def _multiple_bookings_notice(bookings_list: list[dict]) -> str:
+    prepared = []
+    for booking in bookings_list:
+        prepared.append(
+            {
+                **booking,
+                "start_time_label": templates.fmt_dt(_parse_dt(booking.get("start_time"))),
+            }
+        )
+    return templates.multiple_bookings_found(prepared)
+
+
 # -- Photo messages ------------------------------------------------------------
 
 @router.message(StudentBotFilter(), F.photo)
@@ -373,11 +400,8 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
     if role != "student":
         return
 
-    booking = await bookings.find_by_telegram_user(
-        settings.state_path, message.from_user.id
-    )
+    booking = await _resolve_booking_or_prompt(message, settings)
     if not booking:
-        await message.answer(templates.booking_not_found())
         return
 
     booking_id = booking["booking_id"]

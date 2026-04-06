@@ -56,13 +56,15 @@ def _verify_token(
 
 
 class ReplyRequest(BaseModel):
-    booking_id: str
+    booking_id: str | None = None
+    escalation_id: int | None = None
     text: str
 
 
 class ReplyResponse(BaseModel):
     ok: bool
     booking_id: str
+    escalation_id: int
     student_notified: bool
 
 
@@ -95,14 +97,10 @@ async def tutor_reply(
 ) -> ReplyResponse:
     """Tutor replies to a pending escalation. Sends the answer to the student."""
 
-    esc = await escalations.load(settings.state_path, body.booking_id)
-    if not esc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Escalation not found")
+    esc = await _resolve_reply_target(body, settings)
+    booking_id = esc["booking_id"]
 
-    if esc.get("status") != "pending":
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="Escalation already resolved")
-
-    booking = await bookings.load(settings.state_path, body.booking_id)
+    booking = await bookings.load(settings.state_path, booking_id)
     if not booking:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Booking not found")
 
@@ -111,10 +109,14 @@ async def tutor_reply(
         await audit_log(
             "escalation",
             "reply_delivery_blocked",
-            booking_id=body.booking_id,
+            booking_id=booking_id,
             actor="tutor",
             outcome="failure",
-            detail={"via": "api", "error": "student_not_linked"},
+            detail={
+                "via": "api",
+                "error": "student_not_linked",
+                "escalation_id": esc["escalation_id"],
+            },
         )
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -126,10 +128,14 @@ async def tutor_reply(
         await audit_log(
             "escalation",
             "reply_delivery_blocked",
-            booking_id=body.booking_id,
+            booking_id=booking_id,
             actor="tutor",
             outcome="failure",
-            detail={"via": "api", "error": "student_bot_unavailable"},
+            detail={
+                "via": "api",
+                "error": "student_bot_unavailable",
+                "escalation_id": esc["escalation_id"],
+            },
         )
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -140,7 +146,7 @@ async def tutor_reply(
         bot=student_bot,
         chat_id=student_id,
         text=body.text,
-        booking_id=body.booking_id,
+        booking_id=booking_id,
         settings=settings,
         source="tutor_api_reply",
         actor="tutor",
@@ -149,10 +155,14 @@ async def tutor_reply(
         await audit_log(
             "escalation",
             "reply_delivery_blocked",
-            booking_id=body.booking_id,
+            booking_id=booking_id,
             actor="tutor",
             outcome="failure",
-            detail={"via": "api", "error": "student_delivery_failed"},
+            detail={
+                "via": "api",
+                "error": "student_delivery_failed",
+                "escalation_id": esc["escalation_id"],
+            },
         )
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
@@ -161,19 +171,21 @@ async def tutor_reply(
 
     logger.info(
         "Tutor reply sent: booking=%s → student=%s",
-        body.booking_id,
+        booking_id,
         student_id,
     )
 
-    await escalations.resolve(
+    resolved = await escalations.resolve_by_id(
         settings.state_path,
-        body.booking_id,
+        esc["escalation_id"],
         body.text,
         resolved_by="tutor",
     )
+    if resolved is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Escalation already resolved")
     await conversations.update_metadata(
         settings.state_path,
-        body.booking_id,
+        booking_id,
         escalation_state="resolved",
         escalation_reason=None,
         current_stage="tutor_reply_sent",
@@ -183,9 +195,13 @@ async def tutor_reply(
     )
     await audit_log(
         "escalation", "resolved",
-        booking_id=body.booking_id,
+        booking_id=booking_id,
         actor="tutor",
-        detail={"via": "api", "student_notified": student_notified},
+        detail={
+            "via": "api",
+            "student_notified": student_notified,
+            "escalation_id": esc["escalation_id"],
+        },
     )
 
     # Notify tutor in Telegram that reply was delivered
@@ -195,14 +211,15 @@ async def tutor_reply(
         try:
             await owner_bot.send_message(
                 int(tutor_chat_id),
-                f"✅ Ответ отправлен студенту (бронь: {body.booking_id})",
+                f"✅ Ответ отправлен студенту (бронь: {booking_id})",
             )
         except Exception:
             pass
 
     return ReplyResponse(
         ok=True,
-        booking_id=body.booking_id,
+        booking_id=booking_id,
+        escalation_id=esc["escalation_id"],
         student_notified=student_notified,
     )
 
@@ -235,7 +252,7 @@ async def list_escalations(
             val = data.get(ts_field)
             if val is not None and hasattr(val, "isoformat"):
                 data[ts_field] = val.isoformat()
-        data.pop("id", None)
+        data["escalation_id"] = data.pop("id")
         attendee = data.pop("attendee", None) or {}
         if isinstance(attendee, str):
             import json
@@ -257,7 +274,7 @@ async def get_escalation(
     booking_id: str,
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    """Get a specific escalation with full booking context."""
+    """Get the latest escalation for a booking with booking context."""
     esc = await escalations.load(settings.state_path, booking_id)
     if not esc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Escalation not found")
@@ -270,6 +287,37 @@ async def get_escalation(
         esc["start_time"] = booking.get("start_time")
 
     return esc
+
+
+async def _resolve_reply_target(body: ReplyRequest, settings: Settings) -> dict:
+    if body.escalation_id is not None:
+        esc = await escalations.load_by_id(settings.state_path, body.escalation_id)
+        if not esc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Escalation not found")
+        if body.booking_id and esc.get("booking_id") != body.booking_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail="booking_id does not match escalation_id",
+            )
+        if esc.get("status") != "pending":
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="Escalation already resolved")
+        return esc
+
+    if not body.booking_id:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Either booking_id or escalation_id is required",
+        )
+
+    pending = await escalations.list_pending(settings.state_path, booking_id=body.booking_id)
+    if not pending:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Escalation not found")
+    if len(pending) > 1:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Multiple pending escalations for this booking; specify escalation_id",
+        )
+    return pending[0]
 
 
 @router.post(
