@@ -171,6 +171,10 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
             replied_to_id,
             (message.reply_to_message.text or message.reply_to_message.html_text or "")[:200],
         )
+        await message.answer(
+            "Не удалось сопоставить ответ с активным вопросом. "
+            "Ответьте реплаем на последнее сообщение с ID брони."
+        )
         return  # not an escalation reply
 
     logger.info(

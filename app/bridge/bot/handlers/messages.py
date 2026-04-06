@@ -165,8 +165,9 @@ async def _apply_policy_result(
         return
 
     if decision.route == "escalate":
-        escalation_text = response.get("content") if response.get("action") == "escalate" else student_text
-        await escalate(message, booking, escalation_text or student_text, settings)
+        # The tutor must receive the student's actual question, not the
+        # assistant's escalation placeholder text.
+        await escalate(message, booking, student_text, settings)
         return
 
     logger.warning("Policy blocked outbound reply: booking=%s reason=%s", booking_id, decision.reason)
