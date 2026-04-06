@@ -9,17 +9,18 @@ from __future__ import annotations
 
 from aiogram import Bot
 from aiogram.filters import BaseFilter
+from aiogram.types import TelegramObject
 
 from bridge.bot import registry
 
 
 class StudentBotFilter(BaseFilter):
-    async def __call__(self, bot: Bot) -> bool:
+    async def __call__(self, event: TelegramObject, bot: Bot) -> bool:
         student_bot = registry.get_student()
         return bool(student_bot and bot.token == student_bot.token)
 
 
 class TutorBotFilter(BaseFilter):
-    async def __call__(self, bot: Bot) -> bool:
+    async def __call__(self, event: TelegramObject, bot: Bot) -> bool:
         student_bot = registry.get_student()
         return bool(student_bot and bot.token != student_bot.token)
