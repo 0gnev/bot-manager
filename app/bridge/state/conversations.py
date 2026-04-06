@@ -286,11 +286,23 @@ async def append(
     # Export to Obsidian
     try:
         from obsidian_adapter.writer import export_conversation
+        from bridge.state import bookings, contacts
 
         knowledge_path = str(Path(state_path).parent / "knowledge")
         chat = await _load_chat_impl(state_path, booking_id=booking_id, contact_id=contact_id)
-        export_id = chat.booking_id or (f"contact-{chat.contact_id}" if chat.contact_id is not None else "conversation")
-        await export_conversation(knowledge_path, export_id, chat.messages)
+        booking_ctx = await bookings.load(state_path, chat.booking_id) if chat.booking_id else None
+        contact_ctx = (
+            await contacts.load(state_path, chat.contact_id)
+            if chat.contact_id is not None else None
+        )
+        await export_conversation(
+            knowledge_path,
+            chat.messages,
+            booking_id=chat.booking_id,
+            contact_id=chat.contact_id,
+            booking=booking_ctx,
+            contact=contact_ctx,
+        )
     except Exception as exc:
         logger.warning("Failed to export conversation to Obsidian: %s", exc)
 

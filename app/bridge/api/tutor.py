@@ -36,6 +36,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/tutor")
 
 
+def _reply_target_label(booking_id: str | None, contact: dict | None = None) -> str:
+    if booking_id:
+        return f"бронь: {booking_id}"
+    if contact:
+        contact_name = contact.get("name") or contact.get("telegram_username")
+        if contact_name:
+            return f"контакт: {contact_name}"
+        contact_id = contact.get("id")
+        if contact_id is not None:
+            return f"контакт: {contact_id}"
+    return "общий вопрос"
+
+
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
 
@@ -125,7 +138,7 @@ async def tutor_reply(
         )
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            detail="Student is not linked to this booking",
+            detail="Student is not linked to this booking/contact",
         )
 
     student_bot = registry.get_student()
@@ -176,8 +189,9 @@ async def tutor_reply(
         )
 
     logger.info(
-        "Tutor reply sent: booking=%s → student=%s",
+        "Tutor reply sent: booking=%s contact=%s → student=%s",
         booking_id,
+        contact_id,
         student_id,
     )
 
@@ -218,7 +232,7 @@ async def tutor_reply(
         try:
             await owner_bot.send_message(
                 int(tutor_chat_id),
-                f"✅ Ответ отправлен студенту (бронь: {booking_id})",
+                f"✅ Ответ отправлен студенту ({_reply_target_label(booking_id, contact)})",
             )
         except Exception:
             pass

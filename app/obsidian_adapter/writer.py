@@ -9,9 +9,9 @@ Layout:
     bookings/
       {booking_id}.md      — booking card with YAML frontmatter
     conversations/
-      {booking_id}.md      — conversation log
+      {booking_id|contact-<contact_id>}.md      — conversation log
     escalations/
-      {booking_id}.md      — escalation record
+      {booking_id|contact-<contact_id>}-{escalation_id}.md      — escalation record
 """
 
 from __future__ import annotations
@@ -35,6 +35,27 @@ def _fmt_dt(value: str | None) -> str:
         return value
 
 
+def _scope_doc_id(booking_id: str | None, contact_id: int | None) -> str:
+    if booking_id:
+        return booking_id
+    if contact_id is not None:
+        return f"contact-{contact_id}"
+    return "unknown"
+
+
+def _contact_label(contact_id: int | None, contact: dict | None = None) -> str:
+    if contact:
+        return (
+            contact.get("name")
+            or contact.get("telegram_username")
+            or contact.get("email")
+            or (f"Контакт {contact_id}" if contact_id is not None else "Контакт")
+        )
+    if contact_id is not None:
+        return f"Контакт {contact_id}"
+    return "Контакт"
+
+
 # ── Booking ──────────────────────────────────────────────────────────────────
 
 
@@ -54,12 +75,13 @@ async def export_booking(knowledge_path: str, booking: dict) -> None:
     lines = [
         "---",
         f"booking_id: {booking_id}",
+        f"contact_id: {booking.get('contact_id') or ''}",
         f"status: {status}",
         f"event: {booking.get('event', '')}",
         f"start_time: {booking.get('start_time', '')}",
         f"end_time: {booking.get('end_time', '')}",
-        f"telegram_user_id: {booking.get('telegram_user_id', '')}",
-        f"updated_at: {booking.get('updated_at', '')}",
+        f"telegram_user_id: {booking.get('telegram_user_id') or ''}",
+        f"updated_at: {booking.get('updated_at') or ''}",
         "---",
         "",
         f"# {booking.get('title', 'Booking')}",
@@ -121,11 +143,18 @@ async def export_booking(knowledge_path: str, booking: dict) -> None:
 
 
 async def export_conversation(
-    knowledge_path: str, booking_id: str, history: list[dict], booking: dict | None = None
+    knowledge_path: str,
+    history: list[dict],
+    *,
+    booking_id: str | None = None,
+    contact_id: int | None = None,
+    booking: dict | None = None,
+    contact: dict | None = None,
 ) -> None:
     """Write conversation history as an Obsidian markdown note."""
     out_dir = Path(knowledge_path) / "conversations"
     _ensure_dir(out_dir)
+    doc_id = _scope_doc_id(booking_id, contact_id)
 
     title = "Диалог"
     if booking:
@@ -134,10 +163,13 @@ async def export_conversation(
         event = booking.get("title", "")
         if student or event:
             title = f"Диалог — {student or event}"
+    elif contact_id is not None:
+        title = f"Диалог — {_contact_label(contact_id, contact)}"
 
     lines = [
         "---",
-        f"booking_id: {booking_id}",
+        f"booking_id: {booking_id or ''}",
+        f"contact_id: {contact_id if contact_id is not None else ''}",
         f"messages: {len(history)}",
         "---",
         "",
@@ -159,33 +191,47 @@ async def export_conversation(
         ]
 
     content = "\n".join(lines)
-    path = out_dir / f"{booking_id}.md"
+    path = out_dir / f"{doc_id}.md"
     await asyncio.to_thread(path.write_text, content, encoding="utf-8")
 
 
 # ── Escalation ───────────────────────────────────────────────────────────────
 
 
-async def export_escalation(knowledge_path: str, escalation: dict) -> None:
+async def export_escalation(
+    knowledge_path: str,
+    escalation: dict,
+    *,
+    booking: dict | None = None,
+    contact: dict | None = None,
+) -> None:
     """Write escalation record as an Obsidian markdown note."""
     out_dir = Path(knowledge_path) / "escalations"
     _ensure_dir(out_dir)
 
-    booking_id = escalation.get("booking_id", "unknown")
+    booking_id = escalation.get("booking_id")
+    contact_id = escalation.get("contact_id")
+    doc_id = _scope_doc_id(booking_id, contact_id)
     escalation_id = escalation.get("escalation_id")
     status = escalation.get("status", "unknown")
     status_emoji = {"pending": "⏳", "resolved": "✅"}.get(status, "⚪")
+    title_context = (
+        booking.get("title")
+        if booking
+        else _contact_label(contact_id, contact)
+    )
 
     lines = [
         "---",
-        f"booking_id: {booking_id}",
+        f"booking_id: {booking_id or ''}",
+        f"contact_id: {contact_id if contact_id is not None else ''}",
         f"escalation_id: {escalation_id or ''}",
         f"status: {status}",
-        f"created_at: {escalation.get('created_at', '')}",
-        f"resolved_at: {escalation.get('resolved_at', '')}",
+        f"created_at: {escalation.get('created_at') or ''}",
+        f"resolved_at: {escalation.get('resolved_at') or ''}",
         "---",
         "",
-        f"# Эскалация — {booking_id}{f' / {escalation_id}' if escalation_id else ''}",
+        f"# Эскалация — {title_context or doc_id}{f' / {escalation_id}' if escalation_id else ''}",
         "",
         f"**Статус:** {status_emoji} {status}",
         "",
@@ -205,6 +251,6 @@ async def export_escalation(knowledge_path: str, escalation: dict) -> None:
         ]
 
     content = "\n".join(lines)
-    filename = f"{booking_id}-{escalation_id}.md" if escalation_id else f"{booking_id}.md"
+    filename = f"{doc_id}-{escalation_id}.md" if escalation_id else f"{doc_id}.md"
     path = out_dir / filename
     await asyncio.to_thread(path.write_text, content, encoding="utf-8")
