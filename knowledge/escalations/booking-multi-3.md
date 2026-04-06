@@ -2,8 +2,8 @@
 booking_id: booking-multi
 escalation_id: 3
 status: resolved
-created_at: 2026-04-06T05:32:15.957120+00:00
-resolved_at: 2026-04-06T05:32:15.959460+00:00
+created_at: 2026-04-06T06:03:50.877119+00:00
+resolved_at: 2026-04-06T06:03:50.878202+00:00
 ---
 
 # Эскалация — booking-multi / 3
@@ -12,8 +12,8 @@ resolved_at: 2026-04-06T05:32:15.959460+00:00
 
 ## Вопрос студента
 
-Q1
+Q2
 
 ## Ответ преподавателя
 
-Answer to Q1
+Answer to Q2

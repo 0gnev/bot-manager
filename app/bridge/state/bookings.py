@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import date, datetime
 from pathlib import Path
 
 from bridge.db import get_pool
@@ -22,6 +23,16 @@ logger = logging.getLogger(__name__)
 def _knowledge_path(state_path: str) -> str:
     """Derive knowledge path from state path (sibling directory)."""
     return str(Path(state_path).parent / "knowledge")
+
+
+def _coerce_timestamptz(value):
+    """Accept ISO strings or datetime-like values for timestamptz columns."""
+    if value is None or isinstance(value, (datetime, date)):
+        return value
+    if isinstance(value, str):
+        normalized = value.replace("Z", "+00:00")
+        return datetime.fromisoformat(normalized)
+    return value
 
 
 def _row_to_dict(row) -> dict:
@@ -181,8 +192,8 @@ async def save(state_path: str, booking_id: str, data: dict) -> None:
                 data.get("event"),
                 data.get("title"),
                 data.get("description"),
-                data.get("start_time"),
-                data.get("end_time"),
+                _coerce_timestamptz(data.get("start_time")),
+                _coerce_timestamptz(data.get("end_time")),
                 json.dumps(data.get("organizer")) if data.get("organizer") else None,
                 json.dumps(data.get("attendee")) if data.get("attendee") else None,
                 json.dumps(data.get("location")) if data.get("location") else None,
