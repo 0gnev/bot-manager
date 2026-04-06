@@ -15,12 +15,20 @@ from bridge.bot import registry
 
 
 class StudentBotFilter(BaseFilter):
-    async def __call__(self, event: TelegramObject, bot: Bot) -> bool:
+    async def __call__(
+        self,
+        event: TelegramObject | None = None,
+        bot: Bot | None = None,
+    ) -> bool:
         student_bot = registry.get_student()
-        return bool(student_bot and bot.token == student_bot.token)
+        return bool(student_bot and bot and bot.token == student_bot.token)
 
 
 class TutorBotFilter(BaseFilter):
-    async def __call__(self, event: TelegramObject, bot: Bot) -> bool:
+    async def __call__(
+        self,
+        event: TelegramObject | None = None,
+        bot: Bot | None = None,
+    ) -> bool:
         student_bot = registry.get_student()
-        return bool(student_bot and bot.token != student_bot.token)
+        return bool(student_bot and bot and bot.token != student_bot.token)
