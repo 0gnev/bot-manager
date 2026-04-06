@@ -408,6 +408,15 @@ class BridgeHarness:
         response.raise_for_status()
         return response.json()
 
+    def list_tutor_escalations(self) -> list[dict[str, Any]]:
+        response = httpx.get(
+            f"{self.base_url}/api/tutor/escalations",
+            headers={"Authorization": f"Bearer {self.api_token}"},
+            timeout=5.0,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def send_student_text(
         self,
         text: str,

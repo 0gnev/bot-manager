@@ -24,6 +24,10 @@ Current edge cases covered:
 
 - duplicate Planerka webhook is ignored
 - stop-trigger phrases escalate even if the model response is high-confidence
+- student without booking stays in contact-only flow
+- one student with multiple active bookings must pick the deeplinked booking
+- multiple pending escalations for one booking can coexist and be replied to independently
+- tutor reply is routed for contact-only escalation without a booking
 
 Test file:
 
