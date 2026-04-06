@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from conftest import run_async
 
-from bridge.state import approvals, bookings, conversations, escalations, load_controls, save_controls
+from bridge.state import approvals, bookings, contacts, conversations, escalations, load_controls, save_controls
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -222,14 +222,83 @@ def test_booking_find_by_username(db_clean) -> None:
 def test_conversation_append_and_load(db_clean) -> None:
     async def _run():
         await _create_booking("booking-conv")
-        await conversations.append("", "booking-conv", "user", "Hello!")
-        await conversations.append("", "booking-conv", "assistant", "Hi there!")
+        await conversations.append("", "user", "Hello!", booking_id="booking-conv")
+        await conversations.append("", "assistant", "Hi there!", booking_id="booking-conv")
 
-        msgs = await conversations.load("", "booking-conv")
+        msgs = await conversations.load("", booking_id="booking-conv")
         assert len(msgs) == 2
         assert msgs[0]["role"] == "user"
         assert msgs[0]["content"] == "Hello!"
         assert msgs[1]["role"] == "assistant"
+
+    run_async(_run())
+
+
+def test_contact_scoped_conversation_without_booking(db_clean) -> None:
+    async def _run():
+        contact = await contacts.ensure_telegram_contact(
+            "",
+            777,
+            telegram_username="joji5213",
+            name="Ivan Petrov",
+        )
+
+        await conversations.append("", "user", "Привет", contact_id=contact["id"])
+        await conversations.append("", "assistant", "Здравствуйте", contact_id=contact["id"])
+
+        chat = await conversations.load_chat_by_contact("", contact["id"])
+        assert chat.contact_id == contact["id"]
+        assert chat.booking_id is None
+        assert [item["content"] for item in chat.messages] == ["Привет", "Здравствуйте"]
+
+    run_async(_run())
+
+
+def test_contact_only_escalation(db_clean) -> None:
+    async def _run():
+        contact = await contacts.ensure_telegram_contact(
+            "",
+            778,
+            telegram_username="without_booking",
+            name="No Booking",
+        )
+
+        created = await escalations.create(
+            "",
+            None,
+            contact_id=contact["id"],
+            question="Общий вопрос",
+            reason="human_review_required",
+        )
+        pending = await escalations.list_pending("", contact_id=contact["id"])
+
+        assert created["booking_id"] is None
+        assert created["contact_id"] == contact["id"]
+        assert len(pending) == 1
+        assert pending[0]["question"] == "Общий вопрос"
+
+    run_async(_run())
+
+
+def test_booking_context_resolver_prefers_future_booking(db_clean) -> None:
+    async def _run():
+        await _create_booking(
+            "booking-past",
+            telegram_user_id=12345,
+            start_time="2026-04-01T10:00:00+06:00",
+        )
+        future = await _create_booking(
+            "booking-future",
+            telegram_user_id=12345,
+            start_time="2026-04-07T10:00:00+06:00",
+        )
+
+        contact = await contacts.load_by_telegram_user("", 12345)
+        assert contact is not None
+
+        resolved = await bookings.resolve_context_for_contact("", contact["id"])
+        assert resolved is not None
+        assert resolved["booking_id"] == future["booking_id"]
 
     run_async(_run())
 

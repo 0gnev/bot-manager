@@ -20,9 +20,10 @@ async def send_student_message(
     bot: Bot,
     chat_id: int,
     text: str,
-    booking_id: str,
+    booking_id: str | None,
     settings: Settings,
     source: str,
+    contact_id: int | None = None,
     actor: str = "system",
     history_role: str = "assistant",
     record_history: bool = True,
@@ -38,9 +39,10 @@ async def send_student_message(
         if record_history:
             await conversations.append(
                 settings.state_path,
-                booking_id,
                 history_role,
                 text,
+                booking_id=booking_id,
+                contact_id=contact_id,
             )
 
         await audit_log(

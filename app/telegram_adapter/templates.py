@@ -116,9 +116,9 @@ def image_received() -> str:
 
 def escalation_notice(
     student_name: str,
-    booking_id: str,
+    booking_id: str | None,
     question: str,
-    event_title: str,
+    event_title: str | None,
     start_time: datetime | None,
     student_email: str | None = None,
     student_phone: str | None = None,
@@ -145,9 +145,9 @@ def manual_escalation_notice(
     *,
     context_label: str,
     student_name: str,
-    booking_id: str,
+    booking_id: str | None,
     question: str,
-    event_title: str,
+    event_title: str | None,
     start_time: datetime | None,
     student_email: str | None = None,
     student_phone: str | None = None,
@@ -174,9 +174,9 @@ def tutor_notice(
     *,
     header: str,
     student_name: str,
-    booking_id: str,
+    booking_id: str | None,
     question: str,
-    event_title: str,
+    event_title: str | None,
     start_time: datetime | None,
     student_email: str | None = None,
     student_phone: str | None = None,
@@ -201,10 +201,16 @@ def tutor_notice(
     if student_telegram_user_id:
         lines.append(f"<b>Telegram user ID:</b> <code>{student_telegram_user_id}</code>")
 
+    if booking_id:
+        lines.append(
+            f"<b>Занятие:</b> {escape(event_title or 'Занятие')} ({escape(fmt_dt(start_time))})"
+        )
+        lines.append(f"<b>ID брони:</b> <code>{escape(booking_id)}</code>")
+    else:
+        lines.append("<b>Контекст:</b> Общий вопрос без привязки к записи")
+
     lines.extend(
         [
-            f"<b>Занятие:</b> {escape(event_title or 'Занятие')} ({escape(fmt_dt(start_time))})",
-            f"<b>ID брони:</b> <code>{escape(booking_id)}</code>",
             "",
             "<b>Сообщение студента:</b>",
             escape(question or "—"),

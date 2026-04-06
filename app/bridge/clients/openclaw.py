@@ -38,7 +38,7 @@ class OpenclawClient:
     async def chat(
         self,
         message: str,
-        booking_context: dict,
+        booking_context: dict | None,
         history: list[dict],
         knowledge: list[dict] | None = None,
     ) -> dict:
@@ -50,7 +50,7 @@ class OpenclawClient:
         self,
         image_path: str,
         caption: str,
-        booking_context: dict,
+        booking_context: dict | None,
         history: list[dict],
         knowledge: list[dict] | None = None,
     ) -> dict:
@@ -104,7 +104,7 @@ class OpenclawClient:
     # -- Internals -------------------------------------------------------------
 
     def _build_messages(
-        self, booking_context: dict, history: list[dict], knowledge: list[dict] | None = None
+        self, booking_context: dict | None, history: list[dict], knowledge: list[dict] | None = None
     ) -> list[dict]:
         knowledge_section = ""
         if knowledge:
@@ -116,7 +116,7 @@ class OpenclawClient:
                 + "\n---\n".join(chunks)
                 + "\n"
             )
-        safe_context = _sanitize_booking(booking_context)
+        safe_context = _sanitize_context(booking_context)
         policy_block = render_policy_block()
         system = render_prompt(
             "system",
@@ -205,8 +205,10 @@ class OpenclawClient:
             return "Не удалось сейчас ответить по базе знаний. Попробуйте переформулировать запрос."
 
 
-def _sanitize_booking(booking: dict) -> dict:
+def _sanitize_booking(booking: dict | None) -> dict | None:
     """Strip internal/sensitive fields before injecting into AI prompt."""
+    if not booking:
+        return None
     attendee = booking.get("attendee") or {}
     organizer = booking.get("organizer") or {}
     return {
@@ -217,6 +219,29 @@ def _sanitize_booking(booking: dict) -> dict:
         "tutor_name": organizer.get("name", ""),
         "meeting_url": booking.get("meeting_url"),
         "status": booking.get("status"),
+    }
+
+
+def _sanitize_context(context: dict | None) -> dict:
+    if not context:
+        return {}
+    if "contact" not in context and "booking" not in context and "bookings" not in context:
+        return {"booking": _sanitize_booking(context)}
+
+    safe_contact = dict(context.get("contact") or {})
+    safe_contact.pop("telegram_user_id", None)
+    safe_contact.pop("created_at", None)
+    safe_contact.pop("updated_at", None)
+    safe_bookings = []
+    for booking in context.get("bookings") or []:
+        sanitized = _sanitize_booking(booking)
+        if sanitized is not None:
+            safe_bookings.append(sanitized)
+    return {
+        "contact": safe_contact,
+        "booking": _sanitize_booking(context.get("booking")),
+        "bookings": safe_bookings,
+        "context_source": context.get("context_source"),
     }
 
 

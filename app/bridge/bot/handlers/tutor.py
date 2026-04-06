@@ -27,7 +27,7 @@ from bridge.bot.filters import TutorBotFilter
 from bridge.clients.openclaw import OpenclawClient
 from bridge.config import Settings
 from bridge.delivery import send_student_message
-from bridge.state import approvals, bookings, conversations, escalations, OperatingMode
+from bridge.state import approvals, bookings, contacts, conversations, escalations, OperatingMode
 from obsidian_adapter.reader import search as knowledge_search
 from telegram_adapter import templates
 
@@ -159,14 +159,17 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
     booking_id = escalation["booking_id"] if escalation else _extract_booking_id_from_message(
         message.reply_to_message
     )
+    contact_id = escalation.get("contact_id") if escalation else None
     if not escalation and booking_id:
         logger.info(
             "Tutor reply fallback by booking_id from message text: booking=%s",
             booking_id,
         )
         escalation = await escalations.load(settings.state_path, booking_id)
+        if escalation:
+            contact_id = escalation.get("contact_id")
 
-    if not booking_id:
+    if not booking_id and contact_id is None:
         logger.warning(
             "Tutor reply did not match pending escalation: reply_to_message_id=%s text=%r",
             replied_to_id,
@@ -188,15 +191,23 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
     else:
         logger.info("Tutor reply routed by booking_id without escalation state: booking=%s", booking_id)
 
-    booking = await bookings.load(settings.state_path, booking_id)
-    if not booking:
+    booking = await bookings.load(settings.state_path, booking_id) if booking_id else None
+    if booking and contact_id is None:
+        contact_id = booking.get("contact_id")
+
+    contact = await contacts.load(settings.state_path, contact_id) if contact_id is not None else None
+    if not booking and not contact:
         logger.warning("Tutor replied for missing booking: %s", booking_id)
         await message.answer("Не удалось найти запись студента для этого ответа.")
         return
 
-    student_id = booking.get("telegram_user_id")
+    student_id = (booking or {}).get("telegram_user_id") or (contact or {}).get("telegram_user_id")
     if not student_id:
-        logger.warning("Tutor reply blocked: booking=%s has no telegram_user_id", booking_id)
+        logger.warning(
+            "Tutor reply blocked: booking=%s contact=%s has no telegram_user_id",
+            booking_id,
+            contact_id,
+        )
         await message.answer("Студент ещё не подключился через deeplink.")
         return
 
@@ -211,6 +222,7 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         chat_id=student_id,
         text=message.text,
         booking_id=booking_id,
+        contact_id=contact_id,
         settings=settings,
         source="tutor_telegram_reply",
         actor="tutor",
@@ -221,9 +233,9 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         return
 
     if escalation and escalation.get("status") == "pending":
-        await escalations.resolve(
+        await escalations.resolve_by_id(
             settings.state_path,
-            booking_id,
+            escalation["escalation_id"],
             message.text,
             resolved_by="tutor",
         )
@@ -235,7 +247,8 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         )
     await conversations.update_metadata(
         settings.state_path,
-        booking_id,
+        booking_id=booking_id,
+        contact_id=contact_id,
         escalation_state="resolved",
         escalation_reason=None,
         current_stage="tutor_reply_sent",

@@ -14,7 +14,7 @@ from bridge.audit import audit_log
 from bridge.bot.filters import StudentBotFilter
 from bridge.config import Settings
 from bridge.delivery import send_student_message
-from bridge.state import bookings, conversations
+from bridge.state import bookings, contacts, conversations
 from telegram_adapter.deeplink import parse_start_payload
 from telegram_adapter import templates
 
@@ -66,10 +66,13 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
                     await message.answer(_multiple_bookings_notice(linked_bookings))
                     return
         if booking is None:
-            await message.answer(
-                "Привет! Не нашёл вашу запись. "
-                "Убедитесь, что при бронировании указан ваш Telegram."
+            await contacts.ensure_telegram_contact(
+                settings.state_path,
+                message.from_user.id,
+                telegram_username=message.from_user.username,
+                name=message.from_user.full_name,
             )
+            await message.answer("Привет! Чем могу помочь?")
             return
 
     booking_id = booking["booking_id"]
@@ -105,6 +108,7 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
         chat_id=message.chat.id,
         text=templates.welcome(student_name, event_title, start_time),
         booking_id=booking_id,
+        contact_id=booking.get("contact_id"),
         settings=settings,
         source="start_welcome",
         actor="system",
@@ -114,6 +118,7 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
         chat_id=message.chat.id,
         text=templates.session_details(event_title, start_time, end_time, meeting_url),
         booking_id=booking_id,
+        contact_id=booking.get("contact_id"),
         settings=settings,
         source="start_session_details",
         actor="system",

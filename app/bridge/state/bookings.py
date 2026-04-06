@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from bridge.db import get_pool
@@ -39,7 +39,6 @@ def _row_to_dict(row) -> dict:
     """Convert an asyncpg Record into the dict shape consumers expect."""
     data = dict(row)
     # Remove internal PG fields consumers don't expect
-    data.pop("contact_id", None)
     data.pop("active_booking_id", None)
     data.pop("context_rank", None)
     # Convert timestamps to ISO strings
@@ -147,6 +146,35 @@ def _choose_booking_row(rows) -> dict | None:
         return _row_to_dict(active_rows[0])
 
     return None
+
+
+def _resolve_contact_booking(rows) -> dict | None:
+    if not rows:
+        return None
+    rows = [dict(row) for row in rows]
+
+    explicit = [row for row in rows if row["context_rank"] == 1]
+    if explicit:
+        return _row_to_dict(explicit[0])
+
+    now = datetime.now(timezone.utc)
+    future_rows = []
+    for row in rows:
+        start_time = row.get("start_time")
+        if isinstance(start_time, datetime) and start_time >= now:
+            future_rows.append(row)
+    if future_rows:
+        future_rows.sort(key=lambda item: item.get("start_time") or now)
+        return _row_to_dict(future_rows[0])
+
+    rows = sorted(
+        rows,
+        key=lambda item: (
+            item.get("updated_at") or item.get("start_time") or item.get("created_at") or now
+        ),
+        reverse=True,
+    )
+    return _row_to_dict(rows[0])
 
 
 # ── public API ───────────────────────────────────────────────────────────────
@@ -375,3 +403,54 @@ async def find_by_telegram_username(
         """,
         username.lstrip("@"),
     ))
+
+
+async def find_all_by_contact(
+    state_path: str,
+    contact_id: int,
+    *,
+    active_only: bool = True,
+) -> list[dict]:
+    pool = get_pool()
+    conditions = ["b.contact_id = $1"]
+    if active_only:
+        conditions.append("b.status = 'active'")
+    rows = await pool.fetch(
+        f"""
+        SELECT b.*,
+               c.active_booking_id,
+               CASE WHEN c.active_booking_id = b.booking_id THEN 1 ELSE 0 END AS context_rank
+        FROM bookings b
+        LEFT JOIN contacts c ON c.id = b.contact_id
+        WHERE {' AND '.join(conditions)}
+        ORDER BY context_rank DESC,
+                 b.updated_at DESC,
+                 b.start_time ASC NULLS LAST,
+                 b.created_at DESC
+        """,
+        contact_id,
+    )
+    return [_row_to_dict(row) for row in rows]
+
+
+async def resolve_context_for_contact(
+    state_path: str,
+    contact_id: int,
+) -> dict | None:
+    pool = get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT b.*,
+               c.active_booking_id,
+               CASE WHEN c.active_booking_id = b.booking_id THEN 1 ELSE 0 END AS context_rank
+        FROM bookings b
+        LEFT JOIN contacts c ON c.id = b.contact_id
+        WHERE b.contact_id = $1
+          AND b.status = 'active'
+        ORDER BY b.updated_at DESC,
+                 b.start_time ASC NULLS LAST,
+                 b.created_at DESC
+        """,
+        contact_id,
+    )
+    return _resolve_contact_booking(rows)
