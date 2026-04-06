@@ -6,6 +6,7 @@ Endpoints:
   GET  /api/tutor/escalations    — list pending escalations
   GET  /api/tutor/escalations/{booking_id} — get escalation details
   POST /api/tutor/chats/{booking_id}/mode  — switch chat mode
+  POST /api/tutor/contacts/{contact_id}/mode — switch contact chat mode
 
 Auth: Bearer token (tutor_api_token; falls back to gateway_auth_token).
 """
@@ -95,6 +96,122 @@ class ChatAutomationRequest(BaseModel):
 class GlobalAutomationRequest(BaseModel):
     enabled: bool
     reason: str | None = None
+
+
+async def _load_chat_target(
+    settings: Settings,
+    *,
+    booking_id: str | None = None,
+    contact_id: int | None = None,
+):
+    if contact_id is not None:
+        contact = await contacts.load(settings.state_path, contact_id)
+        if not contact:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Contact not found")
+        return await conversations.load_chat_by_contact(settings.state_path, contact_id), contact
+
+    if not booking_id:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Either booking_id or contact_id is required",
+        )
+    return await conversations.load_chat(settings.state_path, booking_id), None
+
+
+async def _set_chat_mode_impl(
+    *,
+    settings: Settings,
+    mode: OperatingMode,
+    booking_id: str | None = None,
+    contact_id: int | None = None,
+) -> dict:
+    chat, _ = await _load_chat_target(
+        settings,
+        booking_id=booking_id,
+        contact_id=contact_id,
+    )
+    chat.mode = mode
+    if mode != OperatingMode.SEMI_AUTO:
+        chat.draft = None
+    chat.automation_enabled = mode != OperatingMode.MANUAL
+    chat.status = "manual_takeover" if mode == OperatingMode.MANUAL else "active"
+    chat.current_stage = "mode_changed"
+    chat.assigned_human = "tutor" if mode == OperatingMode.MANUAL else None
+    await conversations.save_chat(settings.state_path, chat)
+
+    await audit_log(
+        "mode",
+        "changed",
+        booking_id=booking_id,
+        actor="tutor",
+        detail={
+            "new_mode": mode.value,
+            "via": "api",
+            "contact_id": contact_id,
+        },
+    )
+
+    return {
+        "ok": True,
+        "booking_id": booking_id,
+        "contact_id": contact_id,
+        "mode": mode.value,
+    }
+
+
+async def _set_chat_automation_impl(
+    *,
+    settings: Settings,
+    enabled: bool,
+    assigned_human: str | None = "tutor",
+    reason: str | None = None,
+    booking_id: str | None = None,
+    contact_id: int | None = None,
+) -> dict:
+    chat, _ = await _load_chat_target(
+        settings,
+        booking_id=booking_id,
+        contact_id=contact_id,
+    )
+    chat.automation_enabled = enabled
+    if enabled:
+        chat.status = "active"
+        chat.current_stage = "automation_resumed"
+        if chat.mode == OperatingMode.MANUAL:
+            chat.mode = OperatingMode.SEMI_AUTO
+        chat.assigned_human = None
+        chat.escalation_reason = None
+    else:
+        chat.status = "manual_takeover"
+        chat.current_stage = "manual_takeover"
+        chat.mode = OperatingMode.MANUAL
+        chat.assigned_human = assigned_human or "tutor"
+        if reason:
+            chat.escalation_reason = reason
+    await conversations.save_chat(settings.state_path, chat)
+
+    await audit_log(
+        "automation",
+        "chat_toggled",
+        booking_id=booking_id,
+        actor="tutor",
+        detail={
+            "enabled": enabled,
+            "assigned_human": chat.assigned_human,
+            "reason": reason,
+            "via": "api",
+            "contact_id": contact_id,
+        },
+    )
+
+    return {
+        "ok": True,
+        "booking_id": booking_id,
+        "contact_id": contact_id,
+        "automation_enabled": chat.automation_enabled,
+        "mode": chat.mode.value,
+        "status": chat.status,
+    }
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -357,25 +474,28 @@ async def set_chat_mode(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Switch the chat's operating mode through the REST control path."""
-    chat = await conversations.load_chat(settings.state_path, booking_id)
-    chat.mode = body.mode
-    if body.mode != OperatingMode.SEMI_AUTO:
-        chat.draft = None
-    chat.automation_enabled = body.mode != OperatingMode.MANUAL
-    chat.status = "manual_takeover" if body.mode == OperatingMode.MANUAL else "active"
-    chat.current_stage = "mode_changed"
-    chat.assigned_human = "tutor" if body.mode == OperatingMode.MANUAL else None
-    await conversations.save_chat(settings.state_path, chat)
-
-    await audit_log(
-        "mode",
-        "changed",
+    return await _set_chat_mode_impl(
+        settings=settings,
+        mode=body.mode,
         booking_id=booking_id,
-        actor="tutor",
-        detail={"new_mode": body.mode.value, "via": "api"},
     )
 
-    return {"ok": True, "booking_id": booking_id, "mode": body.mode.value}
+
+@router.post(
+    "/contacts/{contact_id}/mode",
+    dependencies=[Depends(_verify_token)],
+)
+async def set_contact_chat_mode(
+    contact_id: int,
+    body: ModeRequest,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Switch the contact-scoped chat mode without requiring a booking."""
+    return await _set_chat_mode_impl(
+        settings=settings,
+        mode=body.mode,
+        contact_id=contact_id,
+    )
 
 
 @router.post(
@@ -388,44 +508,32 @@ async def set_chat_automation(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Explicitly enable or disable automation for a single chat."""
-    chat = await conversations.load_chat(settings.state_path, booking_id)
-    chat.automation_enabled = body.enabled
-    if body.enabled:
-        chat.status = "active"
-        chat.current_stage = "automation_resumed"
-        if chat.mode == OperatingMode.MANUAL:
-            chat.mode = OperatingMode.SEMI_AUTO
-        chat.assigned_human = None
-        chat.escalation_reason = None
-    else:
-        chat.status = "manual_takeover"
-        chat.current_stage = "manual_takeover"
-        chat.mode = OperatingMode.MANUAL
-        chat.assigned_human = body.assigned_human or "tutor"
-        if body.reason:
-            chat.escalation_reason = body.reason
-    await conversations.save_chat(settings.state_path, chat)
-
-    await audit_log(
-        "automation",
-        "chat_toggled",
+    return await _set_chat_automation_impl(
+        settings=settings,
+        enabled=body.enabled,
+        assigned_human=body.assigned_human,
+        reason=body.reason,
         booking_id=booking_id,
-        actor="tutor",
-        detail={
-            "enabled": body.enabled,
-            "assigned_human": chat.assigned_human,
-            "reason": body.reason,
-            "via": "api",
-        },
     )
 
-    return {
-        "ok": True,
-        "booking_id": booking_id,
-        "automation_enabled": chat.automation_enabled,
-        "mode": chat.mode.value,
-        "status": chat.status,
-    }
+
+@router.post(
+    "/contacts/{contact_id}/automation",
+    dependencies=[Depends(_verify_token)],
+)
+async def set_contact_chat_automation(
+    contact_id: int,
+    body: ChatAutomationRequest,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Explicitly enable or disable automation for a contact-scoped chat."""
+    return await _set_chat_automation_impl(
+        settings=settings,
+        enabled=body.enabled,
+        assigned_human=body.assigned_human,
+        reason=body.reason,
+        contact_id=contact_id,
+    )
 
 
 @router.get(

@@ -43,7 +43,7 @@ def test_approval_state_persists_review_metadata(db_clean) -> None:
 
         created = await approvals.create_approval(
             "",
-            booking_id="booking-1",
+            "booking-1",
             student_chat_id=123,
             draft_content="Черновик",
             action="answer",
@@ -61,6 +61,34 @@ def test_approval_state_persists_review_metadata(db_clean) -> None:
         assert resolved["status"] == "approved"
         assert resolved["reviewer"] == "tutor"
         assert resolved["review_channel"] == "api"
+
+    run_async(_run())
+
+
+def test_contact_only_approval_state_persists_contact_scope(db_clean) -> None:
+    async def _run():
+        contact = await contacts.ensure_telegram_contact(
+            "",
+            555,
+            telegram_username="general_student",
+            name="General Student",
+        )
+
+        created = await approvals.create_approval(
+            "",
+            None,
+            contact_id=contact["id"],
+            student_chat_id=555,
+            draft_content="Черновик без записи",
+            action="answer",
+            confidence=0.55,
+        )
+        pending = await approvals.list_pending("", contact_id=contact["id"])
+
+        assert created["booking_id"] is None
+        assert created["contact_id"] == contact["id"]
+        assert len(pending) == 1
+        assert pending[0]["approval_id"] == created["approval_id"]
 
     run_async(_run())
 

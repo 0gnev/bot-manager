@@ -20,26 +20,47 @@ from telegram_adapter import templates
 logger = logging.getLogger(__name__)
 
 
-def _format_approval_notice(data: dict) -> str:
+def _format_approval_notice(data: dict, *, booking: dict | None = None, contact: dict | None = None) -> str:
     action_label = "Ответ" if data["action"] == "answer" else "Уточнение"
     confidence_pct = int(data["confidence"] * 100)
-    return (
-        f"<b>Черновик для проверки</b>\n"
-        f"<b>Тип:</b> {action_label} (уверенность: {confidence_pct}%)\n"
-        f"<b>ID брони:</b> <code>{data['booking_id']}</code>\n\n"
-        f"<b>Текст черновика:</b>\n"
-        f"{data['draft_content']}\n\n"
-        "<i>Если нужно исправить текст, ответьте на это сообщение своим вариантом.</i>"
+    lines = [
+        "<b>Черновик для проверки</b>",
+        f"<b>Тип:</b> {action_label} (уверенность: {confidence_pct}%)",
+    ]
+
+    student_name = ((booking or {}).get("attendee") or {}).get("name") or (contact or {}).get("name")
+    if student_name:
+        lines.append(f"<b>Студент:</b> {student_name}")
+
+    if data.get("booking_id"):
+        lines.append(f"<b>ID брони:</b> <code>{data['booking_id']}</code>")
+    elif data.get("contact_id") is not None:
+        lines.append(f"<b>ID контакта:</b> <code>{data['contact_id']}</code>")
+        lines.append("<b>Контекст:</b> Общий вопрос без привязки к записи")
+
+    lines.extend(
+        [
+            "",
+            "<b>Текст черновика:</b>",
+            data["draft_content"],
+            "",
+            "<i>Если нужно исправить текст, ответьте на это сообщение своим вариантом.</i>",
+        ]
     )
+    return "\n".join(lines)
 
 
 async def submit_for_approval(
-    booking_id: str,
+    booking_id: str | None,
+    *,
+    contact_id: int,
     student_chat_id: int,
     draft_content: str,
     action: str,
     confidence: float,
     settings: Settings,
+    booking: dict | None = None,
+    contact: dict | None = None,
 ) -> dict | None:
     tutor_chat_id = getattr(settings, "tutor_chat_id", None)
     if tutor_chat_id:
@@ -60,13 +81,14 @@ async def submit_for_approval(
     data = await approvals.create_approval(
         settings.state_path,
         booking_id=booking_id,
+        contact_id=contact_id,
         student_chat_id=student_chat_id,
         draft_content=draft_content,
         action=action,
         confidence=confidence,
     )
 
-    notice = _format_approval_notice(data)
+    notice = _format_approval_notice(data, booking=booking, contact=contact)
     sent = await owner_bot.send_message(tutor_chat_id, notice)
 
     await approvals.set_tutor_message_id(
@@ -75,7 +97,8 @@ async def submit_for_approval(
     data["tutor_message_id"] = sent.message_id
     await conversations.update_metadata(
         settings.state_path,
-        booking_id,
+        booking_id=booking_id,
+        contact_id=contact_id,
         current_stage="awaiting_approval",
         status="pending_review",
         confidence=confidence,
@@ -85,12 +108,19 @@ async def submit_for_approval(
         "approval", "submitted",
         booking_id=booking_id,
         actor="system",
-        detail={"approval_id": data["approval_id"], "action": action, "confidence": confidence},
+        detail={
+            "approval_id": data["approval_id"],
+            "action": action,
+            "confidence": confidence,
+            "contact_id": contact_id,
+        },
     )
 
     logger.info(
-        "Submitted approval %s for booking %s -> tutor",
-        data["approval_id"], booking_id,
+        "Submitted approval %s for booking=%s contact=%s -> tutor",
+        data["approval_id"],
+        booking_id,
+        contact_id,
     )
     return data
 
@@ -111,6 +141,7 @@ async def approve(approval_id: str, settings: Settings) -> bool:
         chat_id=data["student_chat_id"],
         text=templates.answer(content),
         booking_id=data["booking_id"],
+        contact_id=data.get("contact_id"),
         settings=settings,
         source="approval_approved",
         actor="tutor",
@@ -127,7 +158,8 @@ async def approve(approval_id: str, settings: Settings) -> bool:
     )
     await conversations.update_metadata(
         settings.state_path,
-        data["booking_id"],
+        booking_id=data.get("booking_id"),
+        contact_id=data.get("contact_id"),
         current_stage="approved_reply_sent",
         status="active",
         confidence=data.get("confidence"),
@@ -160,7 +192,8 @@ async def reject(approval_id: str, settings: Settings) -> bool:
     )
     await conversations.update_metadata(
         settings.state_path,
-        data["booking_id"],
+        booking_id=data.get("booking_id"),
+        contact_id=data.get("contact_id"),
         current_stage="approval_rejected",
         status="pending_review",
         confidence=data.get("confidence"),
@@ -194,6 +227,7 @@ async def edit_and_approve(
         chat_id=data["student_chat_id"],
         text=templates.answer(new_content),
         booking_id=data["booking_id"],
+        contact_id=data.get("contact_id"),
         settings=settings,
         source="approval_edited",
         actor="tutor",
@@ -211,7 +245,8 @@ async def edit_and_approve(
     )
     await conversations.update_metadata(
         settings.state_path,
-        data["booking_id"],
+        booking_id=data.get("booking_id"),
+        contact_id=data.get("contact_id"),
         current_stage="edited_reply_sent",
         status="active",
         confidence=data.get("confidence"),

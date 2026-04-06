@@ -57,11 +57,16 @@ class EditApprovalRequest(BaseModel):
 async def list_approvals(
     status_filter: str = "pending",
     booking_id: str | None = None,
+    contact_id: int | None = None,
     settings: Settings = Depends(get_settings),
 ) -> list[dict]:
-    """List approvals, optionally filtered by status and booking_id."""
+    """List approvals, optionally filtered by status, booking_id, and contact_id."""
     if status_filter == "pending":
-        return await approvals.list_pending(settings.state_path, booking_id)
+        return await approvals.list_pending(
+            settings.state_path,
+            booking_id,
+            contact_id=contact_id,
+        )
 
     # Query all approvals with optional status and booking filters
     from bridge.db import get_pool
@@ -77,6 +82,10 @@ async def list_approvals(
     if booking_id:
         conditions.append(f"booking_id = ${idx}")
         params.append(booking_id)
+        idx += 1
+    if contact_id is not None:
+        conditions.append(f"contact_id = ${idx}")
+        params.append(contact_id)
         idx += 1
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     rows = await pool.fetch(f"SELECT * FROM approvals{where} ORDER BY created_at", *params)

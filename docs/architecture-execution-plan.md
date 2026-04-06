@@ -9,6 +9,9 @@ Source of truth: the compact architecture prompt provided for Bot Manager.
 - [x] Make webhook and Telegram update idempotency atomic for in-flight duplicate deliveries.
 - [x] Normalize image-message history so uncaptioned images are still recorded and current image context is not duplicated.
 - [x] Add focused regression tests for tutor delivery failure, invalid model output, and in-flight idempotency behavior.
+- [x] Move conversation routing to a contact-first model with optional booking context.
+- [x] Support contact-only escalations, approvals, and Obsidian exports without synthetic `None-*` identities.
+- [x] Add contact-scoped tutor control endpoints for mode and automation management.
 
 ## Next priority tasks
 

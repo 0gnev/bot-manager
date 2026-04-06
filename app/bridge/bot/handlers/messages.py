@@ -107,18 +107,17 @@ async def _handle_semi_auto(
         await escalate(message, booking, contact, student_text, settings)
         return
 
-    if not booking_id:
-        await escalate(message, booking, contact, student_text, settings)
-        return
-
     # Submit for approval via the approvals queue
     approval = await submit_for_approval(
         booking_id=booking_id,
+        contact_id=contact_id,
         student_chat_id=message.from_user.id,
         draft_content=content,
         action=action,
         confidence=confidence,
         settings=settings,
+        booking=booking,
+        contact=contact,
     )
     if approval is None:
         await escalate(
