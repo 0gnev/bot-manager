@@ -28,6 +28,7 @@ data/audit/*
 tmp/
 run/
 logs/
+knowledge/
 
 # ── service state / openclaw workspace ────────────────────────────────────────
 .openclaw/
