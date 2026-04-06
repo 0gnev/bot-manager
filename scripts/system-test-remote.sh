@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SYSTEM_TEST_ENV_FILE="${SYSTEM_TEST_ENV_FILE:-.env.remote}"
+
+if [ -f "${SYSTEM_TEST_ENV_FILE}" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "${SYSTEM_TEST_ENV_FILE}"
+  set +a
+fi
+
 SYSTEM_TEST_HOST="${SYSTEM_TEST_HOST:-}"
 SYSTEM_TEST_USER="${SYSTEM_TEST_USER:-}"
 SYSTEM_TEST_PATH="${SYSTEM_TEST_PATH:-}"
