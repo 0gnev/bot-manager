@@ -60,28 +60,34 @@ async def list_approvals(
     settings: Settings = Depends(get_settings),
 ) -> list[dict]:
     """List approvals, optionally filtered by status and booking_id."""
-    all_pending = await approvals.list_pending(settings.state_path, booking_id)
     if status_filter == "pending":
-        return all_pending
-    # For non-pending filters, scan all files
-    import json
-    from pathlib import Path
+        return await approvals.list_pending(settings.state_path, booking_id)
 
-    approvals_dir = Path(settings.state_path) / "approvals"
-    if not approvals_dir.exists():
-        return []
+    # Query all approvals with optional status and booking filters
+    from bridge.db import get_pool
 
+    pool = get_pool()
+    conditions = []
+    params = []
+    idx = 1
+    if status_filter:
+        conditions.append(f"status = ${idx}")
+        params.append(status_filter)
+        idx += 1
+    if booking_id:
+        conditions.append(f"booking_id = ${idx}")
+        params.append(booking_id)
+        idx += 1
+    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+    rows = await pool.fetch(f"SELECT * FROM approvals{where} ORDER BY created_at", *params)
     results = []
-    for path in sorted(approvals_dir.glob("*.json")):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if status_filter and data.get("status") != status_filter:
-                continue
-            if booking_id and data.get("booking_id") != booking_id:
-                continue
-            results.append(data)
-        except Exception:
-            continue
+    for row in rows:
+        data = dict(row)
+        for ts_field in ("created_at", "resolved_at"):
+            val = data.get(ts_field)
+            if val is not None and hasattr(val, "isoformat"):
+                data[ts_field] = val.isoformat()
+        results.append(data)
     return results
 
 

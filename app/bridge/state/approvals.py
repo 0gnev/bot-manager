@@ -1,7 +1,7 @@
 """
-Approval state — persisted as JSON files.
+Approval state — persisted in PostgreSQL.
 
-Layout: {state_path}/approvals/{approval_id}.json
+Table: approvals
 
 Approval lifecycle:
   pending  -> AI draft sent to tutor for review
@@ -12,32 +12,23 @@ Approval lifecycle:
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import uuid
-from datetime import datetime, timezone
-from pathlib import Path
+
+from bridge.db import get_pool
 
 logger = logging.getLogger(__name__)
 
 
-def _approvals_dir(state_path: str) -> Path:
-    p = Path(state_path) / "approvals"
-    p.mkdir(parents=True, exist_ok=True)
-    return p
-
-
-def _approval_path(state_path: str, approval_id: str) -> Path:
-    return _approvals_dir(state_path) / f"{approval_id}.json"
-
-
-async def _write(path: Path, data: dict) -> None:
-    await asyncio.to_thread(
-        path.write_text,
-        json.dumps(data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+def _row_to_dict(row) -> dict:
+    data = dict(row)
+    for ts_field in ("created_at", "resolved_at"):
+        val = data.get(ts_field)
+        if val is not None and hasattr(val, "isoformat"):
+            data[ts_field] = val.isoformat()
+        elif val is None and ts_field == "resolved_at":
+            data[ts_field] = None
+    return data
 
 
 async def create_approval(
@@ -49,31 +40,34 @@ async def create_approval(
     confidence: float,
 ) -> dict:
     approval_id = uuid.uuid4().hex[:12]
-    data = {
-        "approval_id": approval_id,
-        "booking_id": booking_id,
-        "student_chat_id": student_chat_id,
-        "draft_content": draft_content,
-        "action": action,
-        "confidence": confidence,
-        "status": "pending",
-        "reviewer": None,
-        "review_channel": "api",
-        "tutor_message_id": None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "resolved_at": None,
-    }
-    await _write(_approval_path(state_path, approval_id), data)
+    pool = get_pool()
+    row = await pool.fetchrow(
+        """
+        INSERT INTO approvals (
+            approval_id, booking_id, student_chat_id, draft_content,
+            action, confidence
+        ) VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *
+        """,
+        approval_id,
+        booking_id,
+        student_chat_id,
+        draft_content,
+        action,
+        confidence,
+    )
     logger.info("Created approval %s for booking %s", approval_id, booking_id)
-    return data
+    return _row_to_dict(row)
 
 
 async def get_approval(state_path: str, approval_id: str) -> dict | None:
-    path = _approval_path(state_path, approval_id)
-    if not path.exists():
+    pool = get_pool()
+    row = await pool.fetchrow(
+        "SELECT * FROM approvals WHERE approval_id = $1", approval_id
+    )
+    if row is None:
         return None
-    text = await asyncio.to_thread(path.read_text, encoding="utf-8")
-    return json.loads(text)
+    return _row_to_dict(row)
 
 
 async def resolve_approval(
@@ -84,68 +78,73 @@ async def resolve_approval(
     reviewer: str | None = None,
     review_channel: str | None = None,
 ) -> dict | None:
-    data = await get_approval(state_path, approval_id)
-    if data is None:
+    pool = get_pool()
+    row = await pool.fetchrow(
+        """
+        UPDATE approvals
+        SET status = $2,
+            draft_content = COALESCE($3, draft_content),
+            reviewer = COALESCE($4, reviewer),
+            review_channel = COALESCE($5, review_channel),
+            resolved_at = now()
+        WHERE approval_id = $1
+        RETURNING *
+        """,
+        approval_id,
+        status,
+        final_content,
+        reviewer,
+        review_channel,
+    )
+    if row is None:
         return None
-    data["status"] = status
-    if final_content is not None:
-        data["draft_content"] = final_content
-    if reviewer is not None:
-        data["reviewer"] = reviewer
-    if review_channel is not None:
-        data["review_channel"] = review_channel
-    data["resolved_at"] = datetime.now(timezone.utc).isoformat()
-    await _write(_approval_path(state_path, approval_id), data)
     logger.info("Resolved approval %s -> %s", approval_id, status)
-    return data
+    return _row_to_dict(row)
 
 
 async def set_tutor_message_id(
     state_path: str, approval_id: str, message_id: int
 ) -> None:
-    data = await get_approval(state_path, approval_id)
-    if data is None:
-        return
-    data["tutor_message_id"] = message_id
-    await _write(_approval_path(state_path, approval_id), data)
+    pool = get_pool()
+    await pool.execute(
+        "UPDATE approvals SET tutor_message_id = $1 WHERE approval_id = $2",
+        message_id,
+        approval_id,
+    )
 
 
 async def list_pending(
     state_path: str, booking_id: str | None = None
 ) -> list[dict]:
-    def _scan() -> list[dict]:
-        approvals_dir = _approvals_dir(state_path)
-        results = []
-        for path in sorted(approvals_dir.glob("*.json")):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                if data.get("status") != "pending":
-                    continue
-                if booking_id and data.get("booking_id") != booking_id:
-                    continue
-                results.append(data)
-            except Exception:
-                continue
-        return results
-
-    return await asyncio.to_thread(_scan)
+    pool = get_pool()
+    if booking_id:
+        rows = await pool.fetch(
+            """
+            SELECT * FROM approvals
+            WHERE status = 'pending' AND booking_id = $1
+            ORDER BY created_at
+            """,
+            booking_id,
+        )
+    else:
+        rows = await pool.fetch(
+            "SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at"
+        )
+    return [_row_to_dict(r) for r in rows]
 
 
 async def find_pending_by_tutor_message(
     state_path: str, tutor_message_id: int
 ) -> dict | None:
-    def _scan() -> dict | None:
-        approvals_dir = _approvals_dir(state_path)
-        for path in approvals_dir.glob("*.json"):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                if (
-                    data.get("status") == "pending"
-                    and data.get("tutor_message_id") == tutor_message_id
-                ):
-                    return data
-            except Exception:
-                continue
+    pool = get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT * FROM approvals
+        WHERE tutor_message_id = $1 AND status = 'pending'
+        LIMIT 1
+        """,
+        tutor_message_id,
+    )
+    if row is None:
         return None
-
-    return await asyncio.to_thread(_scan)
+    return _row_to_dict(row)
