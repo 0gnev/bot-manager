@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
+
+from conftest import run_async
 
 from bridge.delivery.service import send_student_message
 from bridge.state import bookings, conversations
@@ -67,4 +68,4 @@ def test_send_student_message_records_history_and_audit(pg_pool) -> None:
             )
         ]
 
-    asyncio.get_event_loop().run_until_complete(_run())
+    run_async(_run())
