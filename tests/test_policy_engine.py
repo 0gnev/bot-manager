@@ -6,6 +6,7 @@ from bridge.policies.models import (
     EscalationPolicy,
     ForbiddenReplyPolicy,
     PolicySet,
+    ScopePolicy,
 )
 from bridge.state import OperatingMode
 
@@ -22,6 +23,11 @@ def _policy_set() -> PolicySet:
         ),
         forbidden_reply=ForbiddenReplyPolicy(
             patterns={"payment_confirmation": ("оплата подтвержд",)},
+        ),
+        scope=ScopePolicy(
+            domain_keywords=("занят", "ссылка", "егэ", "информат"),
+            obvious_off_topic_keywords=("пирог", "рецепт", "ингредиент"),
+            generic_howto_prefixes=("как приготовить",),
         ),
     )
 
@@ -83,3 +89,18 @@ def test_policy_escalates_forbidden_reply(monkeypatch) -> None:
 
     assert decision.route == "escalate"
     assert decision.reason.startswith("forbidden_reply:")
+
+
+def test_policy_blocks_obvious_off_topic_query(monkeypatch) -> None:
+    monkeypatch.setattr("bridge.policies.engine.load_policy_set", _policy_set)
+
+    decision = evaluate_ai_response(
+        response={"action": "answer", "content": "Вот рецепт пирога", "confidence": 0.99},
+        booking={"status": "active"},
+        mode=OperatingMode.AUTO,
+        student_text="Как приготовить яблочный пирог?",
+        tutor_available=True,
+    )
+
+    assert decision.route == "block"
+    assert decision.reason == "off_topic_query"

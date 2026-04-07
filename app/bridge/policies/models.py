@@ -39,6 +39,13 @@ class ForbiddenReplyPolicy:
 
 
 @dataclass(frozen=True)
+class ScopePolicy:
+    domain_keywords: tuple[str, ...] = ()
+    obvious_off_topic_keywords: tuple[str, ...] = ()
+    generic_howto_prefixes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class PolicySet:
     response_actions: tuple[ResponseActionPolicy, ...] = ()
     output_format: str = ""
@@ -46,3 +53,4 @@ class PolicySet:
     escalation: EscalationPolicy = EscalationPolicy()
     tone: TonePolicy = TonePolicy()
     forbidden_reply: ForbiddenReplyPolicy = ForbiddenReplyPolicy()
+    scope: ScopePolicy = ScopePolicy()

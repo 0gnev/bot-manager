@@ -51,6 +51,13 @@ def booking_not_found() -> str:
     )
 
 
+def out_of_scope_question() -> str:
+    return (
+        "Я помогаю только по вопросам занятий, записи и подготовки к ЕГЭ по информатике. "
+        "Если вопрос связан с занятием, уточните его, пожалуйста."
+    )
+
+
 def multiple_bookings_found(bookings: list[dict]) -> str:
     lines = [
         "У вас несколько активных записей.",

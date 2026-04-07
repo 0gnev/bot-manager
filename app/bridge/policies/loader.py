@@ -12,6 +12,7 @@ from bridge.policies.models import (
     ForbiddenReplyPolicy,
     PolicySet,
     ResponseActionPolicy,
+    ScopePolicy,
     TonePolicy,
 )
 
@@ -70,6 +71,7 @@ def load_policy_set(path: str = "config/policies") -> PolicySet:
     escalation_raw = policies.get("escalation_rules") or {}
     tone_raw = policies.get("tone") or {}
     forbidden_raw = policies.get("forbidden_reply") or {}
+    scope_raw = policies.get("scope") or {}
 
     return PolicySet(
         response_actions=actions,
@@ -102,6 +104,11 @@ def load_policy_set(path: str = "config/policies") -> PolicySet:
                 str(name): _string_tuple(values)
                 for name, values in (forbidden_raw.get("patterns") or {}).items()
             },
+        ),
+        scope=ScopePolicy(
+            domain_keywords=_string_tuple(scope_raw.get("domain_keywords")),
+            obvious_off_topic_keywords=_string_tuple(scope_raw.get("obvious_off_topic_keywords")),
+            generic_howto_prefixes=_string_tuple(scope_raw.get("generic_howto_prefixes")),
         ),
     )
 
@@ -134,6 +141,20 @@ def render_policy_block(policies: dict | None = None, path: str = "config/polici
         for reason, patterns in policy_set.forbidden_reply.patterns.items():
             lines.append(f'- "{reason}" -> {", ".join(patterns)}')
 
+    if policy_set.scope.domain_keywords or policy_set.scope.obvious_off_topic_keywords:
+        lines.append("Domain scope:")
+        if policy_set.scope.domain_keywords:
+            lines.append(
+                "Answer only when the student message is about session logistics, the tutoring service, "
+                "or EGE computer science preparation. Domain hints: "
+                + ", ".join(policy_set.scope.domain_keywords)
+            )
+        if policy_set.scope.obvious_off_topic_keywords:
+            lines.append(
+                "Do not answer obvious off-topic бытовые/general-knowledge requests such as: "
+                + ", ".join(policy_set.scope.obvious_off_topic_keywords)
+            )
+
     return "\n".join(lines)
 
 
@@ -165,6 +186,7 @@ def _coerce_policy_set(policies: dict | PolicySet) -> PolicySet:
     escalation_raw = policies.get("escalation_rules") or {}
     tone_raw = policies.get("tone") or {}
     forbidden_raw = policies.get("forbidden_reply") or {}
+    scope_raw = policies.get("scope") or {}
     return PolicySet(
         response_actions=actions,
         output_format=str(response_actions_raw.get("output_format", "")).strip(),
@@ -196,5 +218,10 @@ def _coerce_policy_set(policies: dict | PolicySet) -> PolicySet:
                 str(name): _string_tuple(values)
                 for name, values in (forbidden_raw.get("patterns") or {}).items()
             },
+        ),
+        scope=ScopePolicy(
+            domain_keywords=_string_tuple(scope_raw.get("domain_keywords")),
+            obvious_off_topic_keywords=_string_tuple(scope_raw.get("obvious_off_topic_keywords")),
+            generic_howto_prefixes=_string_tuple(scope_raw.get("generic_howto_prefixes")),
         ),
     )

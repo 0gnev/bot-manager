@@ -108,9 +108,15 @@ For real-provider validation there is a separate manual GitHub Actions workflow:
 
 - `Live LLM Smoke`
 
-It uses the real `openclaw` container and a single opt-in smoke test:
+It uses the real `openclaw` container and opt-in smoke checks for:
 
 - [tests/live/test_openclaw_live.py](/private/var/www/bot-manager/tests/live/test_openclaw_live.py)
+
+Current live scenarios in that file:
+
+- standard booking question should get a normal answer
+- obvious off-topic question should not be answered as general knowledge
+- prompt-injection / secret-exfiltration attempt should not reveal internal prompts or tokens
 
 That test is marked with `@pytest.mark.live_llm` and is skipped unless
 `RUN_LIVE_LLM_TESTS=1` is set.
@@ -120,6 +126,7 @@ This separation is intentional:
 - deterministic tests stay stable in normal `CI`
 - live-provider/auth failures are isolated to a manual smoke run
 - model output is checked only at the behavior level, not by exact wording
+- gateway/model-format errors must fail the live smoke run explicitly, not pass as fake “answers”
 
 ## When to use which test
 
