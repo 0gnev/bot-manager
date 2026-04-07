@@ -91,6 +91,7 @@ Tutor/operator review surface now exists in the API:
 - `GET /api/tutor/chats` for recent contact-scoped dialogue summaries
 - `GET /api/tutor/chats/{booking_id}` for booking-scoped message review
 - `GET /api/tutor/contacts/{contact_id}/chat` for contact-scoped message review
+- tutor Telegram flow can now export a full dialogue transcript directly into the tutor chat by username, e-mail, name, or explicit `booking_id`
 
 Important config constraint:
 

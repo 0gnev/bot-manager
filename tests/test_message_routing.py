@@ -229,6 +229,112 @@ def test_semi_auto_without_booking_submits_contact_only_approval(monkeypatch) ->
     assert message.answers == ["Ваш преподаватель проверит ответ и отправит его вручную."]
 
 
+def test_tutor_message_exports_contact_dialogue_without_llm(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        state_path="/tmp/state",
+        knowledge_path="/tmp/knowledge",
+    )
+    message = DummyMessage("можешь отправить весь диалог ilandroxxy сюда в виде текста")
+
+    async def fake_load_by_telegram_username(*args, **kwargs):
+        return {
+            "id": 7,
+            "name": "Ivan Petrov",
+            "telegram_username": "ilandroxxy",
+            "email": "ilandroxxy@gmail.com",
+            "time_zone": "Asia/Bishkek",
+        }
+
+    async def fake_resolve_context_for_contact(*args, **kwargs):
+        return {
+            "booking_id": "booking-1",
+            "title": "Пробный урок",
+        }
+
+    async def fake_load_chat_by_contact(*args, **kwargs):
+        return SimpleNamespace(
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Привет",
+                    "ts": "2026-04-07T16:00:00+00:00",
+                    "source": "telegram_text",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Здравствуйте",
+                    "ts": "2026-04-07T16:01:00+00:00",
+                    "source": "openclaw",
+                },
+            ]
+        )
+
+    async def should_not_be_called(*args, **kwargs):
+        raise AssertionError("Generic tutor assistant must not run for explicit dialogue export")
+
+    async def fake_audit_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(tutor.contacts, "load_by_telegram_username", fake_load_by_telegram_username)
+    monkeypatch.setattr(tutor.bookings, "resolve_context_for_contact", fake_resolve_context_for_contact)
+    monkeypatch.setattr(tutor.conversations, "load_chat_by_contact", fake_load_chat_by_contact)
+    monkeypatch.setattr(tutor, "knowledge_search", should_not_be_called)
+    monkeypatch.setattr(tutor, "audit_log", fake_audit_log)
+
+    asyncio.run(tutor.on_tutor_message(message, "tutor", settings))
+
+    assert len(message.answers) == 1
+    assert "Полный диалог с ilandroxxy" in message.answers[0]
+    assert "Telegram: ilandroxxy" in message.answers[0]
+    assert "[07.04.2026 22:00] Студент: Привет" in message.answers[0]
+    assert "[07.04.2026 22:01] Бот: Здравствуйте" in message.answers[0]
+
+
+def test_tutor_message_export_requests_disambiguation(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        state_path="/tmp/state",
+        knowledge_path="/tmp/knowledge",
+    )
+    message = DummyMessage("отправь весь диалог ivan")
+
+    async def fake_load_by_telegram_username(*args, **kwargs):
+        return None
+
+    async def fake_search_dialog_targets(*args, **kwargs):
+        return [
+            {
+                "id": 7,
+                "name": "Ivan Petrov",
+                "telegram_username": "ivan_one",
+                "email": "ivan1@example.com",
+            },
+            {
+                "id": 8,
+                "name": "Ivan Ivanov",
+                "telegram_username": "ivan_two",
+                "email": "ivan2@example.com",
+            },
+        ]
+
+    async def should_not_be_called(*args, **kwargs):
+        raise AssertionError("No generic tutor assistant call expected for export disambiguation")
+
+    async def fake_audit_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(tutor.contacts, "load_by_telegram_username", fake_load_by_telegram_username)
+    monkeypatch.setattr(tutor.contacts, "search_dialog_targets", fake_search_dialog_targets)
+    monkeypatch.setattr(tutor, "knowledge_search", should_not_be_called)
+    monkeypatch.setattr(tutor, "audit_log", fake_audit_log)
+
+    asyncio.run(tutor.on_tutor_message(message, "tutor", settings))
+
+    assert len(message.answers) == 1
+    assert "Найдено несколько подходящих диалогов" in message.answers[0]
+    assert "telegram: ivan_one" in message.answers[0]
+    assert "telegram: ivan_two" in message.answers[0]
+
+
 def test_stale_chat_with_pending_escalation_is_auto_resumed(monkeypatch) -> None:
     settings = SimpleNamespace(state_path="/tmp/state")
     updated: dict[str, object] = {}
