@@ -46,6 +46,15 @@ _DIALOG_EXPORT_INTENT_RE = re.compile(
     r"|\bистори(?:я|ю)\s+(?:диалога|переписки)\b)",
     re.IGNORECASE,
 )
+_DIALOG_EXPORT_VERB_RE = re.compile(
+    r"\b(?:отправ(?:ь|ить)?|пришл(?:и|ать)?|выгруз(?:и|ить)?|"
+    r"покаж(?:и|и-ка|ите)?|дай|скинь)\b",
+    re.IGNORECASE,
+)
+_DIALOG_EXPORT_NOUN_RE = re.compile(
+    r"\b(?:диалог|чат|переписк(?:а|у|и)?|истори(?:я|ю)|лог)\b",
+    re.IGNORECASE,
+)
 _DIALOG_EXPORT_TARGET_RE = re.compile(
     r"(?:\b(?:весь|полный)\s+(?:диалог|чат|лог|текст\s+диалога)\b"
     r"|\bвсю\s+переписк[ау]\b"
@@ -108,6 +117,26 @@ async def on_mode(message: Message, role: str, settings: Settings) -> None:
         booking_id=booking_id,
         actor="tutor",
         detail={"new_mode": new_mode.value},
+    )
+
+
+@router.message(TutorBotFilter(), Command("dialog"))
+async def on_dialog_export(message: Message, role: str, settings: Settings) -> None:
+    if role != "tutor":
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer(
+            "Использование: <code>/dialog username|email|имя|booking_id</code>"
+        )
+        return
+
+    await _maybe_export_dialogue(
+        message,
+        settings,
+        request_text=parts[1].strip(),
+        force=True,
     )
 
 
@@ -223,6 +252,11 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         escalation = await escalations.load(settings.state_path, booking_id)
         if escalation:
             contact_id = escalation.get("contact_id")
+            if escalation.get("status") != "pending":
+                await message.answer(
+                    "Этот вопрос уже закрыт. Ответьте на новое сообщение студента или дождитесь новой эскалации."
+                )
+                return
     if not escalation and contact_id is not None and not booking_id:
         pending_for_contact = await escalations.list_pending(
             settings.state_path,
@@ -445,9 +479,15 @@ async def _store_tutor_photo_reply(
     }
 
 
-async def _maybe_export_dialogue(message: Message, settings: Settings) -> bool:
-    text = (message.text or "").strip()
-    if not _DIALOG_EXPORT_INTENT_RE.search(text):
+async def _maybe_export_dialogue(
+    message: Message,
+    settings: Settings,
+    *,
+    request_text: str | None = None,
+    force: bool = False,
+) -> bool:
+    text = (request_text or message.text or "").strip()
+    if not force and not _looks_like_dialog_export_request(text):
         return False
 
     booking_id = _extract_booking_id_from_text(text)
@@ -479,6 +519,7 @@ async def _maybe_export_dialogue(message: Message, settings: Settings) -> bool:
                 "scope": "booking",
             },
         )
+        logger.info("Tutor dialogue export sent: booking=%s messages=%s", booking_id, len(chat.messages))
         return True
 
     target = _extract_dialog_export_target(text)
@@ -533,7 +574,15 @@ async def _maybe_export_dialogue(message: Message, settings: Settings) -> bool:
             "query": target,
         },
     )
+    logger.info("Tutor dialogue export sent: contact=%s query=%r messages=%s", contact_id, target, len(chat.messages))
     return True
+
+
+def _looks_like_dialog_export_request(text: str) -> bool:
+    return bool(
+        _DIALOG_EXPORT_INTENT_RE.search(text)
+        or (_DIALOG_EXPORT_VERB_RE.search(text) and _DIALOG_EXPORT_NOUN_RE.search(text))
+    )
 
 
 def _extract_booking_id_from_text(text: str) -> str | None:

@@ -290,6 +290,52 @@ def test_tutor_message_exports_contact_dialogue_without_llm(monkeypatch) -> None
     assert "[07.04.2026 22:01] Бот: Здравствуйте" in message.answers[0]
 
 
+def test_tutor_dialog_command_exports_contact_dialogue(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        state_path="/tmp/state",
+        knowledge_path="/tmp/knowledge",
+    )
+    message = DummyMessage("/dialog ilandroxxy")
+
+    async def fake_load_by_telegram_username(*args, **kwargs):
+        return {
+            "id": 7,
+            "name": "Ivan Petrov",
+            "telegram_username": "ilandroxxy",
+            "email": "ilandroxxy@gmail.com",
+            "time_zone": "Asia/Bishkek",
+        }
+
+    async def fake_resolve_context_for_contact(*args, **kwargs):
+        return None
+
+    async def fake_load_chat_by_contact(*args, **kwargs):
+        return SimpleNamespace(
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": "Здравствуйте",
+                    "ts": "2026-04-07T16:01:00+00:00",
+                    "source": "openclaw",
+                },
+            ]
+        )
+
+    async def fake_audit_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(tutor.contacts, "load_by_telegram_username", fake_load_by_telegram_username)
+    monkeypatch.setattr(tutor.bookings, "resolve_context_for_contact", fake_resolve_context_for_contact)
+    monkeypatch.setattr(tutor.conversations, "load_chat_by_contact", fake_load_chat_by_contact)
+    monkeypatch.setattr(tutor, "audit_log", fake_audit_log)
+
+    asyncio.run(tutor.on_dialog_export(message, "tutor", settings))
+
+    assert len(message.answers) == 1
+    assert "Полный диалог с ilandroxxy" in message.answers[0]
+    assert "[07.04.2026 22:01] Бот: Здравствуйте" in message.answers[0]
+
+
 def test_tutor_message_export_requests_disambiguation(monkeypatch) -> None:
     settings = SimpleNamespace(
         state_path="/tmp/state",
@@ -503,7 +549,7 @@ def test_tutor_reply_routes_by_booking_id_without_pending_escalation(monkeypatch
         return None
 
     async def fake_load_escalation(*args, **kwargs):
-        return {"booking_id": "booking-42", "status": "resolved"}
+        return None
 
     async def fake_load_booking(*args, **kwargs):
         return {"booking_id": "booking-42", "telegram_user_id": 777}
@@ -539,6 +585,37 @@ def test_tutor_reply_routes_by_booking_id_without_pending_escalation(monkeypatch
     assert message.answers == [templates.tutor_answer_sent()]
     assert metadata_updates
     assert audit_events[0][2]["detail"]["matched_pending_escalation"] is False
+
+
+def test_tutor_reply_does_not_route_resolved_escalation(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    reply_to_message = SimpleNamespace(
+        message_id=321,
+        text="Сообщение от студента\nID брони: booking-42",
+        html_text=None,
+        caption=None,
+    )
+    message = DummyMessage(text="Ещё один ответ", reply_to_message=reply_to_message)
+
+    async def fake_no_approval(*args, **kwargs):
+        return None
+
+    async def fake_load_escalation(*args, **kwargs):
+        return {"booking_id": "booking-42", "status": "resolved", "contact_id": 7}
+
+    async def should_not_send(**kwargs):
+        raise AssertionError("Resolved escalation reply must not be delivered to student")
+
+    monkeypatch.setattr(tutor.approvals, "find_pending_by_tutor_message", fake_no_approval)
+    monkeypatch.setattr(tutor.escalations, "find_pending_by_tutor_message", fake_no_approval)
+    monkeypatch.setattr(tutor.escalations, "load", fake_load_escalation)
+    monkeypatch.setattr(tutor, "send_student_message", should_not_send)
+
+    asyncio.run(tutor.on_tutor_reply(message, "tutor", settings))
+
+    assert message.answers == [
+        "Этот вопрос уже закрыт. Ответьте на новое сообщение студента или дождитесь новой эскалации."
+    ]
 
 
 def test_tutor_reply_routes_contact_only_escalation(monkeypatch) -> None:
