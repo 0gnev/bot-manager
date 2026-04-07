@@ -16,6 +16,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from bridge.db import get_pool
 from bridge.state.chat import Chat, OperatingMode
@@ -35,6 +36,42 @@ _CHAT_META_COLUMNS = frozenset({
     "escalation_reason",
     "draft",
 })
+
+
+def _attachment_row_to_dict(row) -> dict:
+    created_at = row["created_at"]
+    return {
+        "id": row["id"],
+        "file_id": row["file_id"],
+        "file_type": row["file_type"],
+        "mime_type": row["mime_type"],
+        "local_path": row["local_path"],
+        "caption": row["caption"],
+        "created_at": created_at.isoformat() if created_at else "",
+    }
+
+
+def _message_row_to_dict(row, attachments: list[dict] | None = None) -> dict[str, Any]:
+    created_at = row["created_at"]
+    model_output = row.get("model_output")
+    if isinstance(model_output, str):
+        try:
+            model_output = json.loads(model_output)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return {
+        "id": row["id"],
+        "role": row["role"],
+        "content": row["content"],
+        "ts": created_at.isoformat() if created_at else "",
+        "direction": row.get("direction"),
+        "source": row.get("source"),
+        "delivery_status": row.get("delivery_status"),
+        "transport_chat_id": row.get("transport_chat_id"),
+        "transport_message_id": row.get("transport_message_id"),
+        "model_output": model_output,
+        "attachments": attachments or [],
+    }
 
 
 async def load_chat(state_path: str, booking_id: str) -> Chat:
@@ -69,7 +106,9 @@ async def _load_chat_impl(
             )
             msg_rows = await conn.fetch(
                 """
-                SELECT role, content, created_at
+                SELECT id, role, content, created_at, direction, source,
+                       delivery_status, transport_chat_id, transport_message_id,
+                       model_output
                 FROM messages
                 WHERE contact_id = $1
                 ORDER BY created_at
@@ -89,18 +128,31 @@ async def _load_chat_impl(
             )
             msg_rows = await conn.fetch(
                 """
-                SELECT role, content, created_at
+                SELECT id, role, content, created_at, direction, source,
+                       delivery_status, transport_chat_id, transport_message_id,
+                       model_output
                 FROM messages
                 WHERE booking_id = $1
                 ORDER BY created_at
                 """,
                 scope["booking_id"],
             )
+        attachment_map: dict[int, list[dict]] = {}
+        message_ids = [row["id"] for row in msg_rows]
+        if message_ids:
+            attachment_rows = await conn.fetch(
+                """
+                SELECT id, message_id, file_id, file_type, mime_type, local_path, caption, created_at
+                FROM attachments
+                WHERE message_id = ANY($1::bigint[])
+                ORDER BY created_at
+                """,
+                message_ids,
+            )
+            for row in attachment_rows:
+                attachment_map.setdefault(row["message_id"], []).append(_attachment_row_to_dict(row))
 
-    messages = [
-        {"role": r["role"], "content": r["content"], "ts": r["created_at"].isoformat()}
-        for r in msg_rows
-    ]
+    messages = [_message_row_to_dict(r, attachment_map.get(r["id"], [])) for r in msg_rows]
 
     if meta_row is None:
         now = datetime.now(timezone.utc).isoformat()
@@ -257,31 +309,88 @@ async def append(
     booking_id: str | None = None,
     *,
     contact_id: int | None = None,
-) -> None:
+    direction: str | None = None,
+    source: str | None = None,
+    delivery_status: str | None = None,
+    transport_chat_id: int | None = None,
+    transport_message_id: int | None = None,
+    model_output: dict | None = None,
+    attachments: list[dict] | None = None,
+) -> dict[str, Any]:
     """Append a single message turn to the conversation history."""
     pool = get_pool()
     async with pool.acquire() as conn:
-        scope = await _resolve_scope(conn, booking_id=booking_id, contact_id=contact_id)
-        await conn.execute(
-            """
-            INSERT INTO messages (contact_id, booking_id, role, content)
-            VALUES ($1, $2, $3, $4)
-            """,
-            scope["contact_id"],
-            scope["booking_id"],
-            role,
-            content,
-        )
-        if scope["contact_id"] is not None:
-            await conn.execute(
-                "UPDATE contacts SET updated_at = now() WHERE id = $1",
+        async with conn.transaction():
+            scope = await _resolve_scope(conn, booking_id=booking_id, contact_id=contact_id)
+            resolved_direction = direction or _default_direction(role)
+            resolved_delivery_status = delivery_status or _default_delivery_status(resolved_direction)
+            row = await conn.fetchrow(
+                """
+                INSERT INTO messages (
+                    contact_id,
+                    booking_id,
+                    role,
+                    content,
+                    direction,
+                    source,
+                    delivery_status,
+                    transport_chat_id,
+                    transport_message_id,
+                    model_output
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+                RETURNING id, role, content, created_at, direction, source,
+                          delivery_status, transport_chat_id, transport_message_id,
+                          model_output
+                """,
                 scope["contact_id"],
-            )
-        elif scope["booking_id"] is not None:
-            await conn.execute(
-                "UPDATE bookings SET updated_at = now() WHERE booking_id = $1",
                 scope["booking_id"],
+                role,
+                content,
+                resolved_direction,
+                source,
+                resolved_delivery_status,
+                transport_chat_id,
+                transport_message_id,
+                json.dumps(model_output) if model_output is not None else None,
             )
+            created_attachments: list[dict] = []
+            for attachment in attachments or []:
+                attachment_row = await conn.fetchrow(
+                    """
+                    INSERT INTO attachments (
+                        message_id,
+                        contact_id,
+                        booking_id,
+                        file_id,
+                        file_type,
+                        mime_type,
+                        local_path,
+                        caption
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    RETURNING id, message_id, file_id, file_type, mime_type, local_path, caption, created_at
+                    """,
+                    row["id"],
+                    scope["contact_id"],
+                    scope["booking_id"],
+                    attachment.get("file_id"),
+                    attachment.get("file_type", "file"),
+                    attachment.get("mime_type"),
+                    attachment.get("local_path"),
+                    attachment.get("caption"),
+                )
+                created_attachments.append(_attachment_row_to_dict(attachment_row))
+            if scope["contact_id"] is not None:
+                await conn.execute(
+                    "UPDATE contacts SET updated_at = now() WHERE id = $1",
+                    scope["contact_id"],
+                )
+            elif scope["booking_id"] is not None:
+                await conn.execute(
+                    "UPDATE bookings SET updated_at = now() WHERE booking_id = $1",
+                    scope["booking_id"],
+                )
 
     # Export to Obsidian
     try:
@@ -306,6 +415,8 @@ async def append(
     except Exception as exc:
         logger.warning("Failed to export conversation to Obsidian: %s", exc)
 
+    return _message_row_to_dict(row, created_attachments)
+
 
 async def _resolve_scope(conn, *, booking_id: str | None, contact_id: int | None) -> dict:
     resolved_contact_id = contact_id
@@ -326,3 +437,19 @@ async def _resolve_scope(conn, *, booking_id: str | None, contact_id: int | None
         "contact_id": resolved_contact_id,
         "booking_id": resolved_booking_id,
     }
+
+
+def _default_direction(role: str) -> str:
+    if role == "user":
+        return "inbound"
+    if role == "assistant":
+        return "outbound"
+    return "internal"
+
+
+def _default_delivery_status(direction: str) -> str:
+    if direction == "inbound":
+        return "received"
+    if direction == "outbound":
+        return "sent"
+    return "recorded"

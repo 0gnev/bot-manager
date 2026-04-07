@@ -130,6 +130,11 @@ class OpenclawClient:
         messages: list[dict] = [{"role": "system", "content": system}]
         for entry in history:
             if entry.get("role") in ("user", "assistant"):
+                if (
+                    entry.get("direction") == "outbound"
+                    and entry.get("delivery_status") not in {None, "sent", "delivered"}
+                ):
+                    continue
                 messages.append({"role": entry["role"], "content": entry["content"]})
         return messages
 

@@ -14,6 +14,7 @@ class DummyBot:
 
     async def send_message(self, chat_id: int, text: str, **kwargs) -> None:
         self.sent_messages.append((chat_id, text, kwargs))
+        return SimpleNamespace(message_id=501, chat=SimpleNamespace(id=chat_id))
 
 
 def test_send_student_message_records_history_and_audit(db_clean) -> None:
@@ -55,6 +56,11 @@ def test_send_student_message_records_history_and_audit(db_clean) -> None:
         assert len(history) == 1
         assert history[0]["role"] == "assistant"
         assert history[0]["content"] == "Привет!"
+        assert history[0]["direction"] == "outbound"
+        assert history[0]["delivery_status"] == "sent"
+        assert history[0]["source"] == "test"
+        assert history[0]["transport_chat_id"] == 42
+        assert history[0]["transport_message_id"] == 501
 
         assert audit_events == [
             (
@@ -67,5 +73,55 @@ def test_send_student_message_records_history_and_audit(db_clean) -> None:
                 },
             )
         ]
+
+    run_async(_run())
+
+
+def test_send_student_message_records_failed_delivery_metadata(db_clean) -> None:
+    settings = SimpleNamespace(state_path="")
+    audit_events: list[tuple[str, str, dict]] = []
+
+    class FailingBot:
+        async def send_message(self, chat_id: int, text: str, **kwargs) -> None:
+            raise RuntimeError("telegram down")
+
+    async def fake_audit_log(event_type: str, action: str, **kwargs) -> None:
+        audit_events.append((event_type, action, kwargs))
+
+    from bridge import delivery as delivery_pkg
+    from bridge.delivery import service
+
+    service.audit_log = fake_audit_log
+    delivery_pkg.send_student_message
+
+    async def _run():
+        await bookings.save("", "booking-1", {
+            "booking_id": "booking-1",
+            "status": "active",
+            "title": "Test",
+            "attendee": {"name": "Student", "email": "s@test.com"},
+        })
+
+        result = await send_student_message(
+            bot=FailingBot(),
+            chat_id=42,
+            text="Привет!",
+            booking_id="booking-1",
+            settings=settings,
+            source="test",
+        )
+
+        assert result is False
+        history = await conversations.load("", "booking-1")
+        assert len(history) == 1
+        assert history[0]["delivery_status"] == "failed"
+        assert history[0]["direction"] == "outbound"
+        assert history[0]["transport_chat_id"] == 42
+        assert any(
+            event_type == "delivery"
+            and action == "student_message_sent"
+            and kwargs.get("outcome") == "failure"
+            for event_type, action, kwargs in audit_events
+        )
 
     run_async(_run())
