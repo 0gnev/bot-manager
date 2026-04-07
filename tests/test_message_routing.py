@@ -12,8 +12,19 @@ from telegram_adapter import templates
 
 
 class DummyMessage:
-    def __init__(self, text: str = "", reply_to_message: SimpleNamespace | None = None) -> None:
+    def __init__(
+        self,
+        text: str = "",
+        reply_to_message: SimpleNamespace | None = None,
+        *,
+        caption: str | None = None,
+        photo: list[SimpleNamespace] | None = None,
+        bot=None,
+    ) -> None:
         self.text = text
+        self.caption = caption
+        self.photo = photo or []
+        self.bot = bot
         self.reply_to_message = reply_to_message
         self.answers: list[str] = []
 
@@ -27,6 +38,22 @@ class DummyStudentMessage(DummyMessage):
         self.from_user = SimpleNamespace(id=321, username="joji5213", full_name="Ivan Petrov")
         self.chat = SimpleNamespace(id=321)
         self.bot = object()
+
+
+class DummyTutorBot:
+    def __init__(self, download_target: str) -> None:
+        self.download_target = download_target
+        self.requested_file_ids: list[str] = []
+        self.downloaded_paths: list[str] = []
+
+    async def get_file(self, file_id: str):
+        self.requested_file_ids.append(file_id)
+        return SimpleNamespace(file_path=f"photos/{file_id}.jpg")
+
+    async def download_file(self, file_path: str, destination: str) -> None:
+        self.downloaded_paths.append(destination)
+        with open(destination, "wb") as handle:
+            handle.write(self.download_target.encode("utf-8"))
 
 
 def test_policy_escalation_forwards_original_student_text(monkeypatch) -> None:
@@ -459,6 +486,139 @@ def test_tutor_reply_routes_contact_only_escalation(monkeypatch) -> None:
     assert delivered["chat_id"] == 900
     assert delivered["contact_id"] == 7
     assert delivered["booking_id"] is None
+    assert message.answers == [templates.tutor_answer_sent()]
+
+
+def test_tutor_photo_reply_routes_attachment_to_student(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state", uploads_path=str(tmp_path))
+    reply_to_message = SimpleNamespace(
+        message_id=400,
+        text="Сообщение от студента\nID брони: booking-42",
+        html_text=None,
+        caption=None,
+    )
+    tutor_bot = DummyTutorBot("fake-image")
+    message = DummyMessage(
+        reply_to_message=reply_to_message,
+        caption="Вот схема",
+        photo=[SimpleNamespace(file_id="photo-1")],
+        bot=tutor_bot,
+    )
+    delivered: dict[str, object] = {}
+
+    async def fake_no_approval(*args, **kwargs):
+        return None
+
+    async def fake_find_pending_by_tutor_message(*args, **kwargs):
+        return {"booking_id": "booking-42", "contact_id": 7, "status": "pending", "escalation_id": 55}
+
+    async def fake_load_booking(*args, **kwargs):
+        return {"booking_id": "booking-42", "telegram_user_id": 900, "contact_id": 7}
+
+    async def fake_load_contact(*args, **kwargs):
+        return {"id": 7, "telegram_user_id": 900}
+
+    async def fake_send_student_message(**kwargs) -> bool:
+        delivered.update(kwargs)
+        return True
+
+    async def fake_update_metadata(*args, **kwargs) -> None:
+        return None
+
+    async def fake_audit_log(*args, **kwargs) -> None:
+        return None
+
+    async def fake_resolve_by_id(*args, **kwargs):
+        return {"booking_id": "booking-42", "contact_id": 7, "status": "resolved", "escalation_id": 55}
+
+    monkeypatch.setattr(tutor.approvals, "find_pending_by_tutor_message", fake_no_approval)
+    monkeypatch.setattr(tutor.escalations, "find_pending_by_tutor_message", fake_find_pending_by_tutor_message)
+    monkeypatch.setattr(tutor.bookings, "load", fake_load_booking)
+    monkeypatch.setattr(tutor.contacts, "load", fake_load_contact)
+    monkeypatch.setattr(tutor, "send_student_message", fake_send_student_message)
+    monkeypatch.setattr(tutor.conversations, "update_metadata", fake_update_metadata)
+    monkeypatch.setattr(tutor, "audit_log", fake_audit_log)
+    monkeypatch.setattr(tutor.escalations, "resolve_by_id", fake_resolve_by_id)
+    monkeypatch.setattr(tutor.registry, "get_student", lambda: object())
+
+    asyncio.run(tutor.on_tutor_reply(message, "tutor", settings))
+
+    assert delivered["chat_id"] == 900
+    assert delivered["text"] == "[image] Вот схема"
+    assert delivered["caption"] == "Вот схема"
+    assert delivered["photo_path"] == str(tmp_path / "booking-42" / "tutor-replies" / "photo-1.jpg")
+    assert delivered["attachments"][0]["file_id"] == "photo-1"
+    assert delivered["attachments"][0]["caption"] == "Вот схема"
+    assert tutor_bot.requested_file_ids == ["photo-1"]
+    assert message.answers == [templates.tutor_answer_sent()]
+
+
+def test_tutor_photo_reply_matches_contact_id_from_forwarded_photo_caption(monkeypatch, tmp_path) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state", uploads_path=str(tmp_path))
+    reply_to_message = SimpleNamespace(
+        message_id=401,
+        text=None,
+        html_text=None,
+        caption="Изображение от студента\nID контакта: 7",
+    )
+    tutor_bot = DummyTutorBot("fake-image")
+    message = DummyMessage(
+        reply_to_message=reply_to_message,
+        caption="Отправляю пример",
+        photo=[SimpleNamespace(file_id="photo-2")],
+        bot=tutor_bot,
+    )
+    delivered: dict[str, object] = {}
+
+    async def fake_no_approval(*args, **kwargs):
+        return None
+
+    async def fake_no_pending(*args, **kwargs):
+        return None
+
+    async def fake_list_pending(*args, **kwargs):
+        return [{"booking_id": None, "contact_id": 7, "status": "pending", "escalation_id": 77}]
+
+    async def fake_load_contact(*args, **kwargs):
+        return {"id": 7, "telegram_user_id": 901}
+
+    async def fake_no_booking(*args, **kwargs):
+        return None
+
+    async def fake_send_student_message(**kwargs) -> bool:
+        delivered.update(kwargs)
+        return True
+
+    async def fake_update_metadata(*args, **kwargs) -> None:
+        return None
+
+    async def fake_audit_log(*args, **kwargs) -> None:
+        return None
+
+    async def fake_load_escalation(*args, **kwargs):
+        raise AssertionError("Booking lookup should not run for contact-only fallback")
+
+    async def fake_resolve_by_id(*args, **kwargs):
+        return {"booking_id": None, "contact_id": 7, "status": "resolved", "escalation_id": 77}
+
+    monkeypatch.setattr(tutor.approvals, "find_pending_by_tutor_message", fake_no_approval)
+    monkeypatch.setattr(tutor.escalations, "find_pending_by_tutor_message", fake_no_pending)
+    monkeypatch.setattr(tutor.escalations, "list_pending", fake_list_pending)
+    monkeypatch.setattr(tutor.escalations, "load", fake_load_escalation)
+    monkeypatch.setattr(tutor.escalations, "resolve_by_id", fake_resolve_by_id)
+    monkeypatch.setattr(tutor.contacts, "load", fake_load_contact)
+    monkeypatch.setattr(tutor.bookings, "load", fake_no_booking)
+    monkeypatch.setattr(tutor, "send_student_message", fake_send_student_message)
+    monkeypatch.setattr(tutor.conversations, "update_metadata", fake_update_metadata)
+    monkeypatch.setattr(tutor, "audit_log", fake_audit_log)
+    monkeypatch.setattr(tutor.registry, "get_student", lambda: object())
+
+    asyncio.run(tutor.on_tutor_reply(message, "tutor", settings))
+
+    assert delivered["chat_id"] == 901
+    assert delivered["booking_id"] is None
+    assert delivered["contact_id"] == 7
+    assert delivered["text"] == "[image] Отправляю пример"
     assert message.answers == [templates.tutor_answer_sent()]
 
 

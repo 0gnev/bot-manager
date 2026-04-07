@@ -8,6 +8,7 @@ import asyncio
 import logging
 
 from aiogram import Bot
+from aiogram.types import FSInputFile
 
 from bridge.audit import audit_log
 from bridge.config import Settings
@@ -30,29 +31,40 @@ async def send_student_message(
     record_history: bool = True,
     disable_web_page_preview: bool | None = None,
     model_output: dict | None = None,
+    photo_path: str | None = None,
+    caption: str | None = None,
+    attachments: list[dict] | None = None,
 ) -> bool:
     """Send one student-facing message and record audit/history consistently."""
     attempts = max(int(getattr(settings, "telegram_delivery_attempts", 1) or 1), 1)
     backoff = max(float(getattr(settings, "telegram_delivery_backoff_seconds", 0.0) or 0.0), 0.0)
-
-    kwargs: dict = {}
-    if disable_web_page_preview is not None:
-        kwargs["disable_web_page_preview"] = disable_web_page_preview
+    message_type = "photo" if photo_path else "text"
 
     try:
         sent_message = None
         for attempt in range(1, attempts + 1):
             try:
-                sent_message = await bot.send_message(chat_id, text, **kwargs)
+                if photo_path:
+                    sent_message = await bot.send_photo(
+                        chat_id,
+                        FSInputFile(photo_path),
+                        caption=caption or None,
+                    )
+                else:
+                    kwargs: dict = {}
+                    if disable_web_page_preview is not None:
+                        kwargs["disable_web_page_preview"] = disable_web_page_preview
+                    sent_message = await bot.send_message(chat_id, text, **kwargs)
                 break
             except Exception as exc:
                 if attempt >= attempts:
                     raise
                 logger.warning(
-                    "Retrying student delivery: booking=%s chat_id=%s source=%s attempt=%s/%s error=%s",
+                    "Retrying student delivery: booking=%s chat_id=%s source=%s type=%s attempt=%s/%s error=%s",
                     booking_id,
                     chat_id,
                     source,
+                    message_type,
                     attempt,
                     attempts,
                     exc,
@@ -73,6 +85,7 @@ async def send_student_message(
                 transport_chat_id=chat_id,
                 transport_message_id=getattr(sent_message, "message_id", None),
                 model_output=model_output,
+                attachments=attachments,
             )
 
         await audit_log(
@@ -80,7 +93,12 @@ async def send_student_message(
             "student_message_sent",
             booking_id=booking_id,
             actor=actor,
-            detail={"source": source, "chat_id": chat_id, "attempts": attempt},
+            detail={
+                "source": source,
+                "chat_id": chat_id,
+                "attempts": attempt,
+                "message_type": message_type,
+            },
         )
         return True
     except Exception as exc:
@@ -96,12 +114,14 @@ async def send_student_message(
                 delivery_status="failed",
                 transport_chat_id=chat_id,
                 model_output=model_output,
+                attachments=attachments,
             )
         logger.error(
-            "Failed to send student-facing message: booking=%s chat_id=%s source=%s error=%s",
+            "Failed to send student-facing message: booking=%s chat_id=%s source=%s type=%s error=%s",
             booking_id,
             chat_id,
             source,
+            message_type,
             exc,
         )
         await audit_log(
@@ -110,6 +130,11 @@ async def send_student_message(
             booking_id=booking_id,
             actor=actor,
             outcome="failure",
-            detail={"source": source, "chat_id": chat_id, "error": str(exc)[:200]},
+            detail={
+                "source": source,
+                "chat_id": chat_id,
+                "message_type": message_type,
+                "error": str(exc)[:200],
+            },
         )
         return False

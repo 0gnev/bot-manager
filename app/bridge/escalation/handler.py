@@ -91,7 +91,10 @@ async def escalate(
         try:
             with open(image_path, "rb") as f:
                 await owner_bot.send_photo(
-                    tutor_chat_id, f, reply_to_message_id=sent.message_id
+                    tutor_chat_id,
+                    f,
+                    caption=_tutor_image_caption(booking_id=booking_id, contact_id=contact_id),
+                    reply_to_message_id=sent.message_id,
                 )
         except Exception as exc:
             logger.warning("Could not forward image to tutor: %s", exc)
@@ -139,6 +142,14 @@ def _parse_dt(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value)
     except Exception:
         return None
+
+
+def _tutor_image_caption(*, booking_id: str | None, contact_id: int) -> str:
+    lines = ["Изображение от студента"]
+    if booking_id:
+        lines.append(f"ID брони: {booking_id}")
+    lines.append(f"ID контакта: {contact_id}")
+    return "\n".join(lines)
 
 
 async def prepare_escalation_package(

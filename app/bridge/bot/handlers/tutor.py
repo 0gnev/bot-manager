@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, PhotoSize
 
 from bridge.approvals import handler as approval_handler
 from bridge.audit import audit_log
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 router = Router(name="tutor")
 
 _BOOKING_ID_RE = re.compile(r"ID брони:\s*(?:<code>)?([A-Za-z0-9_-]+)")
+_CONTACT_ID_RE = re.compile(r"ID контакта:\s*(?:<code>)?(\d+)")
 _APPROVAL_SEND_RE = re.compile(r"^/send(?:\s+|\n+)(.+)$", re.DOTALL)
 
 
@@ -123,15 +125,18 @@ async def on_approval_callback(
 # -- Tutor reply-to: approval edit or escalation response ----------------------
 
 @router.message(TutorBotFilter(), F.text, F.reply_to_message)
+@router.message(TutorBotFilter(), F.photo, F.reply_to_message)
 async def on_tutor_reply(message: Message, role: str, settings: Settings) -> None:
     if role != "tutor":
         return
 
     replied_to_id = message.reply_to_message.message_id
+    reply_text = _reply_text(message)
     logger.info(
-        "Tutor reply received: reply_to_message_id=%s text=%r",
+        "Tutor reply received: reply_to_message_id=%s text=%r has_photo=%s",
         replied_to_id,
-        (message.text or "")[:200],
+        reply_text[:200],
+        bool(message.photo),
     )
 
     # Check if this is a reply to an approval message (edit & approve)
@@ -144,6 +149,10 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
             approval["approval_id"],
             approval["booking_id"],
         )
+        if not message.text:
+            await message.answer("Черновик можно править только текстовым сообщением.")
+            return
+
         direct_send = _APPROVAL_SEND_RE.match((message.text or "").strip())
         if direct_send:
             ok = await approval_handler.edit_and_approve(
@@ -173,10 +182,11 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
     escalation = await escalations.find_pending_by_tutor_message(
         settings.state_path, replied_to_id
     )
-    booking_id = escalation["booking_id"] if escalation else _extract_booking_id_from_message(
-        message.reply_to_message
-    )
+    booking_id = escalation["booking_id"] if escalation else None
     contact_id = escalation.get("contact_id") if escalation else None
+    if not escalation:
+        booking_id = _extract_booking_id_from_message(message.reply_to_message)
+        contact_id = _extract_contact_id_from_message(message.reply_to_message)
     if not escalation and booking_id:
         logger.info(
             "Tutor reply fallback by booking_id from message text: booking=%s",
@@ -185,6 +195,18 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         escalation = await escalations.load(settings.state_path, booking_id)
         if escalation:
             contact_id = escalation.get("contact_id")
+    if not escalation and contact_id is not None and not booking_id:
+        pending_for_contact = await escalations.list_pending(
+            settings.state_path,
+            contact_id=contact_id,
+        )
+        if len(pending_for_contact) == 1:
+            escalation = pending_for_contact[0]
+            logger.info(
+                "Tutor reply fallback by contact_id from message text: contact=%s escalation_id=%s",
+                contact_id,
+                escalation["escalation_id"],
+            )
 
     if not booking_id and contact_id is None:
         logger.warning(
@@ -234,15 +256,31 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         await message.answer("Ошибка: не удалось отправить ответ студенту.")
         return
 
+    attachments = None
+    photo_path = None
+    if message.photo:
+        attachment = await _store_tutor_photo_reply(
+            message,
+            settings,
+            booking_id=booking_id,
+            contact_id=contact_id,
+        )
+        attachments = [attachment]
+        photo_path = attachment["local_path"]
+
+    history_text = _history_text(message)
     sent = await send_student_message(
         bot=student_bot,
         chat_id=student_id,
-        text=message.text,
+        text=history_text,
         booking_id=booking_id,
         contact_id=contact_id,
         settings=settings,
         source="tutor_telegram_reply",
         actor="tutor",
+        photo_path=photo_path,
+        caption=message.caption or None,
+        attachments=attachments,
     )
     if not sent:
         logger.error("Tutor reply delivery failed: booking=%s student_id=%s", booking_id, student_id)
@@ -253,7 +291,7 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         await escalations.resolve_by_id(
             settings.state_path,
             escalation["escalation_id"],
-            message.text,
+            history_text,
             resolved_by="tutor",
         )
     else:
@@ -317,3 +355,60 @@ def _extract_booking_id_from_message(message: Message | None) -> str | None:
         if match:
             return match.group(1)
     return None
+
+
+def _extract_contact_id_from_message(message: Message | None) -> int | None:
+    if message is None:
+        return None
+    candidates = [
+        getattr(message, "html_text", None),
+        getattr(message, "text", None),
+        getattr(message, "caption", None),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        match = _CONTACT_ID_RE.search(candidate)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _reply_text(message: Message) -> str:
+    if message.text:
+        return message.text
+    if message.caption:
+        return message.caption
+    if message.photo:
+        return "[image]"
+    return ""
+
+
+def _history_text(message: Message) -> str:
+    if message.photo:
+        caption = (message.caption or "").strip()
+        return f"[image] {caption}" if caption else "[image]"
+    return message.text or ""
+
+
+async def _store_tutor_photo_reply(
+    message: Message,
+    settings: Settings,
+    *,
+    booking_id: str | None,
+    contact_id: int | None,
+) -> dict[str, str | None]:
+    photo: PhotoSize = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    upload_scope = booking_id or f"contact-{contact_id or 'unknown'}"
+    upload_dir = Path(settings.uploads_path) / upload_scope / "tutor-replies"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    local_path = str(upload_dir / f"{photo.file_id}.jpg")
+    await message.bot.download_file(file.file_path, destination=local_path)
+    return {
+        "file_id": photo.file_id,
+        "file_type": "photo",
+        "mime_type": "image/jpeg",
+        "local_path": local_path,
+        "caption": message.caption or None,
+    }

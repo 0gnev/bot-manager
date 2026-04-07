@@ -11,10 +11,15 @@ from bridge.state import bookings, conversations
 class DummyBot:
     def __init__(self) -> None:
         self.sent_messages: list[tuple[int, str, dict]] = []
+        self.sent_photos: list[tuple[int, object, str | None]] = []
 
     async def send_message(self, chat_id: int, text: str, **kwargs) -> None:
         self.sent_messages.append((chat_id, text, kwargs))
         return SimpleNamespace(message_id=501, chat=SimpleNamespace(id=chat_id))
+
+    async def send_photo(self, chat_id: int, photo, caption: str | None = None):
+        self.sent_photos.append((chat_id, photo, caption))
+        return SimpleNamespace(message_id=502, chat=SimpleNamespace(id=chat_id))
 
 
 def test_send_student_message_records_history_and_audit(db_clean) -> None:
@@ -69,7 +74,12 @@ def test_send_student_message_records_history_and_audit(db_clean) -> None:
                 {
                     "booking_id": "booking-1",
                     "actor": "system",
-                    "detail": {"source": "test", "chat_id": 42, "attempts": 1},
+                    "detail": {
+                        "source": "test",
+                        "chat_id": 42,
+                        "attempts": 1,
+                        "message_type": "text",
+                    },
                 },
             )
         ]
@@ -179,5 +189,67 @@ def test_send_student_message_retries_transient_failure_then_succeeds(db_clean) 
         assert history[0]["delivery_status"] == "sent"
         assert history[0]["transport_message_id"] == 777
         assert audit_events[0][2]["detail"]["attempts"] == 3
+        assert audit_events[0][2]["detail"]["message_type"] == "text"
+
+    run_async(_run())
+
+
+def test_send_student_message_sends_photo_and_records_attachment(db_clean, tmp_path) -> None:
+    settings = SimpleNamespace(state_path="")
+    bot = DummyBot()
+    audit_events: list[tuple[str, str, dict]] = []
+    photo_path = tmp_path / "reply.jpg"
+    photo_path.write_bytes(b"fake-jpeg")
+
+    async def fake_audit_log(event_type: str, action: str, **kwargs) -> None:
+        audit_events.append((event_type, action, kwargs))
+
+    from bridge import delivery as delivery_pkg
+    from bridge.delivery import service
+
+    service.audit_log = fake_audit_log
+    delivery_pkg.send_student_message
+
+    async def _run():
+        await bookings.save("", "booking-1", {
+            "booking_id": "booking-1",
+            "status": "active",
+            "title": "Test",
+            "attendee": {"name": "Student", "email": "s@test.com"},
+        })
+
+        result = await send_student_message(
+            bot=bot,
+            chat_id=42,
+            text="[image] Смотрите пример",
+            booking_id="booking-1",
+            settings=settings,
+            source="tutor_telegram_reply",
+            photo_path=str(photo_path),
+            caption="Смотрите пример",
+            attachments=[
+                {
+                    "file_id": "photo-file",
+                    "file_type": "photo",
+                    "mime_type": "image/jpeg",
+                    "local_path": str(photo_path),
+                    "caption": "Смотрите пример",
+                }
+            ],
+        )
+
+        assert result is True
+        assert len(bot.sent_photos) == 1
+        assert bot.sent_photos[0][0] == 42
+        assert bot.sent_photos[0][2] == "Смотрите пример"
+
+        history = await conversations.load("", "booking-1")
+        assert len(history) == 1
+        assert history[0]["content"] == "[image] Смотрите пример"
+        assert history[0]["transport_message_id"] == 502
+        assert history[0]["attachments"][0]["file_id"] == "photo-file"
+        assert history[0]["attachments"][0]["local_path"] == str(photo_path)
+
+        assert audit_events[0][2]["detail"]["message_type"] == "photo"
 
     run_async(_run())
