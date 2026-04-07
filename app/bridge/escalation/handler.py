@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import Any
 
 from aiogram.types import Message
 
@@ -31,6 +32,9 @@ async def escalate(
     question: str,
     settings: Settings,
     image_path: str | None = None,
+    *,
+    reason: str | None = "human_review_required",
+    ai_response: dict[str, Any] | None = None,
 ) -> None:
     tutor_chat_id = getattr(settings, "tutor_chat_id", None)
     if tutor_chat_id:
@@ -54,6 +58,16 @@ async def escalate(
     booking_id = booking["booking_id"] if booking else None
     contact_id = contact["id"]
     attendee = (booking or {}).get("attendee") or {}
+    package = await prepare_escalation_package(
+        settings,
+        booking=booking,
+        contact=contact,
+        question=question,
+        booking_id=booking_id,
+        contact_id=contact_id,
+        reason=reason,
+        ai_response=ai_response,
+    )
 
     notice = templates.escalation_notice(
         student_name=attendee.get("name") or contact.get("name") or "Студент",
@@ -66,6 +80,9 @@ async def escalate(
         student_telegram=attendee.get("telegram") or contact.get("telegram_username"),
         student_time_zone=attendee.get("timeZone") or contact.get("time_zone"),
         student_telegram_user_id=(booking or {}).get("telegram_user_id") or contact.get("telegram_user_id"),
+        summary=package["summary"],
+        relevant_history=package["relevant_history"],
+        draft_reply=package["draft_reply"],
     )
 
     sent = await owner_bot.send_message(tutor_chat_id, notice)
@@ -85,14 +102,17 @@ async def escalate(
         contact_id=contact_id,
         question=question,
         tutor_message_id=sent.message_id,
-        reason="human_review_required",
+        reason=reason or "human_review_required",
+        summary=package["summary"],
+        relevant_history=package["relevant_history"],
+        draft_reply=package["draft_reply"],
     )
     await conversations.update_metadata(
         settings.state_path,
         booking_id=booking_id,
         contact_id=contact_id,
         escalation_state="pending",
-        escalation_reason="human_review_required",
+        escalation_reason=reason or "human_review_required",
         current_stage="awaiting_tutor_reply",
         status="escalated",
         assigned_human=str(tutor_chat_id),
@@ -104,7 +124,11 @@ async def escalate(
         "escalation", "created",
         booking_id=booking_id,
         actor=str(message.from_user.id),
-        detail={"has_image": image_path is not None, "contact_id": contact_id},
+        detail={
+            "has_image": image_path is not None,
+            "contact_id": contact_id,
+            "has_draft_reply": bool(package["draft_reply"]),
+        },
     )
 
 
@@ -115,3 +139,130 @@ def _parse_dt(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value)
     except Exception:
         return None
+
+
+async def prepare_escalation_package(
+    settings: Settings,
+    *,
+    booking: dict | None,
+    contact: dict,
+    question: str,
+    booking_id: str | None,
+    contact_id: int,
+    reason: str | None,
+    ai_response: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    chat = await conversations.load_chat_by_contact(
+        settings.state_path,
+        contact_id,
+        booking_id=booking_id,
+    )
+    history = await conversations.load(
+        settings.state_path,
+        booking_id,
+        contact_id=contact_id,
+    )
+    return {
+        "summary": _build_summary(
+            booking=booking,
+            contact=contact,
+            reason=reason,
+            chat=chat,
+        ),
+        "relevant_history": _select_relevant_history(history, question),
+        "draft_reply": _extract_draft_reply(ai_response),
+    }
+
+
+def _build_summary(
+    *,
+    booking: dict | None,
+    contact: dict,
+    reason: str | None,
+    chat,
+) -> str:
+    parts: list[str] = []
+    if booking:
+        parts.append(
+            "Контекст: "
+            f"{booking.get('title') or 'Занятие'} "
+            f"({templates.fmt_dt(_parse_dt(booking.get('start_time')))})"
+        )
+    else:
+        parts.append(
+            "Контекст: общий вопрос"
+            f" от {contact.get('name') or contact.get('telegram_username') or 'студента'}"
+        )
+
+    parts.append(f"Причина: {_reason_label(reason)}")
+
+    mode = getattr(getattr(chat, "mode", None), "value", getattr(chat, "mode", None))
+    if mode:
+        parts.append(f"Режим чата: {mode}")
+
+    confidence = getattr(chat, "confidence", None)
+    if isinstance(confidence, (float, int)):
+        parts.append(f"Последняя уверенность AI: {int(confidence * 100)}%")
+
+    return ". ".join(part.rstrip(".") for part in parts if part).strip()
+
+
+def _reason_label(reason: str | None) -> str:
+    mapping = {
+        "human_review_required": "нужна проверка преподавателя",
+        "model_requested_escalation": "модель запросила преподавателя",
+        "global_automation_disabled": "глобальная автоматизация отключена",
+        "chat_automation_disabled": "автоматизация чата отключена",
+        "manual_mode": "чат переведён в ручной режим",
+        "policy_low_confidence": "низкая уверенность ответа",
+        "policy_stop_trigger": "обнаружен стоп-триггер",
+        "policy_risky_topic": "требуется ручная проверка",
+    }
+    if not reason:
+        return mapping["human_review_required"]
+    return mapping.get(reason, reason.replace("_", " "))
+
+
+def _select_relevant_history(history: list[dict], question: str, *, limit: int = 4) -> list[dict]:
+    items: list[dict] = []
+    normalized_question = (question or "").strip()
+
+    for msg in history:
+        content = (msg.get("content") or "").strip()
+        if not content:
+            continue
+
+        if msg.get("direction") == "outbound" and msg.get("delivery_status") not in {
+            None,
+            "sent",
+            "delivered",
+        }:
+            continue
+
+        items.append(
+            {
+                "role": msg.get("role"),
+                "content": _truncate(content, 280),
+                "ts": msg.get("ts"),
+            }
+        )
+
+    if items and items[-1].get("role") == "user" and items[-1].get("content") == normalized_question:
+        items = items[:-1]
+
+    return items[-limit:]
+
+
+def _extract_draft_reply(ai_response: dict[str, Any] | None) -> str | None:
+    if not isinstance(ai_response, dict):
+        return None
+    if ai_response.get("action") not in {"answer", "clarify"}:
+        return None
+    content = (ai_response.get("content") or "").strip()
+    return content or None
+
+
+def _truncate(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"

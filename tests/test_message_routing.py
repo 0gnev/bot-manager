@@ -44,7 +44,7 @@ def test_policy_escalation_forwards_original_student_text(monkeypatch) -> None:
     async def fake_audit_log(*args, **kwargs) -> None:
         return None
 
-    async def fake_escalate(message_obj, booking_obj, contact_obj, question, settings_obj) -> None:
+    async def fake_escalate(message_obj, booking_obj, contact_obj, question, settings_obj, **kwargs) -> None:
         captured["question"] = question
 
     monkeypatch.setattr(messages.conversations, "load_chat_by_contact", fake_load_chat)
@@ -396,9 +396,21 @@ def test_escalation_keeps_contact_automation_enabled(monkeypatch) -> None:
     async def fake_audit_log(*args, **kwargs):
         return None
 
+    async def fake_load_chat_by_contact(*args, **kwargs):
+        return SimpleNamespace(mode=OperatingMode.AUTO, confidence=0.42)
+
+    async def fake_load_history(*args, **kwargs):
+        return [
+            {"role": "user", "content": "Здравствуйте", "ts": "2026-04-07T08:00:00+00:00"},
+            {"role": "assistant", "content": "Добрый день", "ts": "2026-04-07T08:01:00+00:00"},
+            {"role": "user", "content": "Нужен преподаватель", "ts": "2026-04-07T08:02:00+00:00"},
+        ]
+
     monkeypatch.setattr(escalation_handler.registry, "get_owner", lambda: FakeOwnerBot())
     monkeypatch.setattr(escalation_handler.escalations, "create", fake_create)
     monkeypatch.setattr(escalation_handler.conversations, "update_metadata", fake_update_metadata)
+    monkeypatch.setattr(escalation_handler.conversations, "load_chat_by_contact", fake_load_chat_by_contact)
+    monkeypatch.setattr(escalation_handler.conversations, "load", fake_load_history)
     monkeypatch.setattr(escalation_handler, "audit_log", fake_audit_log)
 
     asyncio.run(
@@ -415,6 +427,30 @@ def test_escalation_keeps_contact_automation_enabled(monkeypatch) -> None:
     assert metadata_updates[0]["contact_id"] == 7
     assert metadata_updates[0]["current_stage"] == "awaiting_tutor_reply"
     assert "automation_enabled" not in metadata_updates[0]
+
+
+def test_escalation_notice_includes_summary_history_and_draft() -> None:
+    notice = templates.escalation_notice(
+        student_name="иван петров",
+        booking_id="booking-42",
+        question="Как будет проходить занятие?",
+        event_title="Встреча на 30 минут",
+        start_time=None,
+        summary="Контекст: Встреча на 30 минут. Причина: низкая уверенность ответа.",
+        relevant_history=[
+            {"role": "user", "content": "Здравствуйте"},
+            {"role": "assistant", "content": "Добрый день"},
+        ],
+        draft_reply="Занятие пройдёт онлайн по ссылке из подтверждения.",
+    )
+
+    assert "<b>Сводка:</b>" in notice
+    assert "Причина: низкая уверенность ответа." in notice
+    assert "<b>Недавний диалог:</b>" in notice
+    assert "<b>Студент:</b> Здравствуйте" in notice
+    assert "<b>Бот:</b> Добрый день" in notice
+    assert "<b>Черновик ответа:</b>" in notice
+    assert "Занятие пройдёт онлайн по ссылке из подтверждения." in notice
 
 
 def test_tutor_reply_keeps_contact_automation_enabled(monkeypatch) -> None:

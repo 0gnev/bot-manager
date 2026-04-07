@@ -10,6 +10,7 @@ Escalation lifecycle:
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -22,6 +23,12 @@ def _row_to_dict(row) -> dict:
     """Convert an asyncpg Record to the dict shape consumers expect."""
     data = dict(row)
     data["escalation_id"] = data.pop("id")
+    relevant_history = data.get("relevant_history")
+    if isinstance(relevant_history, str):
+        try:
+            data["relevant_history"] = json.loads(relevant_history)
+        except (json.JSONDecodeError, TypeError):
+            pass
     for ts_field in ("created_at", "resolved_at"):
         val = data.get(ts_field)
         if val is not None and hasattr(val, "isoformat"):
@@ -39,12 +46,24 @@ async def create(
     question: str,
     tutor_message_id: int | None = None,
     reason: str | None = None,
+    summary: str | None = None,
+    relevant_history: list[dict] | None = None,
+    draft_reply: str | None = None,
 ) -> dict:
     pool = get_pool()
     row = await pool.fetchrow(
         """
-        INSERT INTO escalations (booking_id, contact_id, question, tutor_message_id, reason)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO escalations (
+            booking_id,
+            contact_id,
+            question,
+            tutor_message_id,
+            reason,
+            summary,
+            relevant_history,
+            draft_reply
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
         RETURNING *
         """,
         booking_id,
@@ -52,6 +71,9 @@ async def create(
         question,
         tutor_message_id,
         reason,
+        summary,
+        json.dumps(relevant_history) if relevant_history is not None else None,
+        draft_reply,
     )
     data = _row_to_dict(row)
     await _export_to_obsidian(state_path, data)

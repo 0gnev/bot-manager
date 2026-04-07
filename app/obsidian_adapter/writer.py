@@ -241,6 +241,40 @@ async def export_escalation(
         "",
     ]
 
+    summary = escalation.get("summary")
+    if summary:
+        lines += [
+            "## Сводка",
+            "",
+            summary,
+            "",
+        ]
+
+    relevant_history = escalation.get("relevant_history") or []
+    if relevant_history:
+        role_labels = {"user": "Студент", "assistant": "Бот", "system": "Система"}
+        lines += [
+            "## Недавний диалог",
+            "",
+        ]
+        for item in relevant_history:
+            role = role_labels.get(item.get("role", ""), item.get("role", "Сообщение"))
+            lines += [
+                f"### {role}",
+                "",
+                item.get("content", "—"),
+                "",
+            ]
+
+    draft_reply = escalation.get("draft_reply")
+    if draft_reply:
+        lines += [
+            "## Черновик ответа",
+            "",
+            draft_reply,
+            "",
+        ]
+
     tutor_reply = escalation.get("tutor_reply")
     if tutor_reply:
         lines += [

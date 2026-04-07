@@ -42,6 +42,12 @@ def test_export_contact_only_escalation_uses_contact_doc_id(tmp_path) -> None:
                 "escalation_id": 5,
                 "status": "pending",
                 "question": "Общий вопрос",
+                "summary": "Контекст: общий вопрос. Причина: нужна проверка преподавателя.",
+                "relevant_history": [
+                    {"role": "user", "content": "Здравствуйте"},
+                    {"role": "assistant", "content": "Добрый день"},
+                ],
+                "draft_reply": "Черновик ответа преподавателю.",
                 "created_at": "2026-04-06T06:00:00+00:00",
                 "resolved_at": None,
             },
@@ -59,6 +65,9 @@ def test_export_contact_only_escalation_uses_contact_doc_id(tmp_path) -> None:
     assert "resolved_at: None" not in content
     assert "# Эскалация — Ivan Petrov / 5" in content
     assert "Общий вопрос" in content
+    assert "## Сводка" in content
+    assert "## Недавний диалог" in content
+    assert "## Черновик ответа" in content
 
 
 def test_export_booking_includes_contact_id(tmp_path) -> None:

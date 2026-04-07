@@ -160,6 +160,12 @@ def test_escalation_state_persists_reason_and_resolver(db_clean) -> None:
             question="Нужен человек",
             tutor_message_id=555,
             reason="human_review_required",
+            summary="Контекст: Встреча. Причина: нужна проверка преподавателя.",
+            relevant_history=[
+                {"role": "user", "content": "Здравствуйте"},
+                {"role": "assistant", "content": "Добрый день"},
+            ],
+            draft_reply="Могу уточнить детали у преподавателя.",
         )
         resolved = await escalations.resolve(
             "",
@@ -170,8 +176,12 @@ def test_escalation_state_persists_reason_and_resolver(db_clean) -> None:
 
         assert created["reason"] == "human_review_required"
         assert created["status"] == "pending"
+        assert created["summary"] == "Контекст: Встреча. Причина: нужна проверка преподавателя."
+        assert created["relevant_history"][0]["content"] == "Здравствуйте"
+        assert created["draft_reply"] == "Могу уточнить детали у преподавателя."
         assert resolved["status"] == "resolved"
         assert resolved["resolved_by"] == "tutor"
+        assert resolved["summary"] == created["summary"]
 
     run_async(_run())
 
