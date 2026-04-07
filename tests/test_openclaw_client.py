@@ -90,6 +90,35 @@ class _FakeEscalationTextResponse:
         }
 
 
+class _FakeApprovalRevisionResponse:
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return {
+            "id": "resp_test",
+            "object": "response",
+            "created_at": 0,
+            "status": "completed",
+            "model": "openclaw",
+            "output": [
+                {
+                    "type": "message",
+                    "id": "msg_test",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "{\"decision\":\"revise\",\"content\":\"Стоимость занятия — 3 рубля.\",\"confidence\":0.82}",
+                        }
+                    ],
+                }
+            ],
+            "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+        }
+
+
 class _FakeAsyncClient:
     requests: list[dict] = []
     response_cls = _FakeResponse
@@ -233,3 +262,36 @@ def test_openclaw_retries_transport_error_before_success(monkeypatch) -> None:
         for event_type, action, _ in audit_events
         if event_type == "ai" and action == "call_made"
     ) == 2
+
+
+def test_openclaw_can_rewrite_approval_draft(monkeypatch) -> None:
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.response_cls = _FakeApprovalRevisionResponse
+    settings = SimpleNamespace(
+        openclaw_base_url="http://openclaw:18789",
+        gateway_auth_token="token",
+        openclaw_gateway_model="openclaw",
+    )
+
+    async def fake_audit_log(*args, **kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(openclaw.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(openclaw, "audit_log", fake_audit_log)
+
+    client = openclaw.OpenclawClient(settings)
+    result = asyncio.run(
+        client.revise_approval_draft(
+            student_message="Сколько стоит занятие?",
+            current_draft="Стоимость занятия — 3 рубля. Хотите ссылку?",
+            tutor_instruction="Оставь только стоимость занятия",
+            booking_context={},
+        )
+    )
+
+    assert result == {
+        "decision": "revise",
+        "content": "Стоимость занятия — 3 рубля.",
+        "confidence": 0.82,
+    }
+    assert _FakeAsyncClient.requests[0]["json"]["model"] == "openclaw"

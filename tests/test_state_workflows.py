@@ -93,6 +93,33 @@ def test_contact_only_approval_state_persists_contact_scope(db_clean) -> None:
     run_async(_run())
 
 
+def test_pending_approval_draft_can_be_revised_in_place(db_clean) -> None:
+    async def _run():
+        await _create_booking("booking-approval-revise")
+
+        created = await approvals.create_approval(
+            "",
+            "booking-approval-revise",
+            student_chat_id=123,
+            draft_content="Старый черновик",
+            action="answer",
+            confidence=0.6,
+        )
+        updated = await approvals.update_pending_draft(
+            "",
+            created["approval_id"],
+            "Новый черновик",
+            tutor_message_id=456,
+        )
+
+        assert updated is not None
+        assert updated["draft_content"] == "Новый черновик"
+        assert updated["tutor_message_id"] == 456
+        assert updated["status"] == "pending"
+
+    run_async(_run())
+
+
 def test_conversation_messages_store_delivery_transport_and_attachments(db_clean) -> None:
     async def _run():
         contact = await contacts.ensure_telegram_contact(

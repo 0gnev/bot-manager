@@ -268,6 +268,58 @@ def test_tutor_reply_reports_unmatched_escalation(monkeypatch) -> None:
     ]
 
 
+def test_tutor_reply_to_approval_revises_draft(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    reply_to_message = SimpleNamespace(message_id=321, text="Черновик для проверки")
+    message = DummyMessage(text="Отправь только стоимость занятия", reply_to_message=reply_to_message)
+    calls: list[tuple[str, str]] = []
+
+    async def fake_find_pending_by_tutor_message(*args, **kwargs):
+        return {"approval_id": "appr-1", "booking_id": "booking-42", "status": "pending"}
+
+    async def fake_revise_pending_approval(approval_id: str, instruction: str, settings_obj):
+        calls.append((approval_id, instruction))
+        return {"decision": "revise", "content": "Стоимость занятия — 3 рубля."}
+
+    async def fail_if_called(*args, **kwargs):
+        raise AssertionError("Direct approve path must not be used for plain tutor instructions")
+
+    monkeypatch.setattr(tutor.approvals, "find_pending_by_tutor_message", fake_find_pending_by_tutor_message)
+    monkeypatch.setattr(tutor.approval_handler, "revise_pending_approval", fake_revise_pending_approval)
+    monkeypatch.setattr(tutor.approval_handler, "edit_and_approve", fail_if_called)
+
+    asyncio.run(tutor.on_tutor_reply(message, "tutor", settings))
+
+    assert calls == [("appr-1", "Отправь только стоимость занятия")]
+    assert message.answers == ["Черновик обновлён. Проверьте новый вариант выше."]
+
+
+def test_tutor_reply_to_approval_send_command_sends_directly(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    reply_to_message = SimpleNamespace(message_id=321, text="Черновик для проверки")
+    message = DummyMessage(text="/send Стоимость занятия — 3 рубля.", reply_to_message=reply_to_message)
+    calls: list[tuple[str, str]] = []
+
+    async def fake_find_pending_by_tutor_message(*args, **kwargs):
+        return {"approval_id": "appr-1", "booking_id": "booking-42", "status": "pending"}
+
+    async def fake_edit_and_approve(approval_id: str, new_content: str, settings_obj):
+        calls.append((approval_id, new_content))
+        return True
+
+    async def fail_if_called(*args, **kwargs):
+        raise AssertionError("Revision path must not be used for /send replies")
+
+    monkeypatch.setattr(tutor.approvals, "find_pending_by_tutor_message", fake_find_pending_by_tutor_message)
+    monkeypatch.setattr(tutor.approval_handler, "edit_and_approve", fake_edit_and_approve)
+    monkeypatch.setattr(tutor.approval_handler, "revise_pending_approval", fail_if_called)
+
+    asyncio.run(tutor.on_tutor_reply(message, "tutor", settings))
+
+    assert calls == [("appr-1", "Стоимость занятия — 3 рубля.")]
+    assert message.answers == ["Ответ отправлен студенту."]
+
+
 def test_tutor_reply_routes_by_booking_id_without_pending_escalation(monkeypatch) -> None:
     settings = SimpleNamespace(state_path="/tmp/state")
     reply_to_message = SimpleNamespace(
