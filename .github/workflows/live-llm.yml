@@ -76,12 +76,12 @@ jobs:
           cid="$(docker compose --env-file .env ps -q openclaw)"
           test -n "$cid" || { echo "openclaw container not found"; exit 1; }
           for _ in $(seq 1 60); do
-            status="$(docker inspect -f '{{.State.Health.Status}}' "$cid")"
-            if [ "$status" = "healthy" ]; then
+            if curl -fsS http://127.0.0.1:18789/health >/dev/null; then
               exit 0
             fi
             sleep 2
           done
+          docker inspect -f '{{json .State.Health}}' "$cid" || true
           docker compose --env-file .env logs --tail=200 openclaw || true
           exit 1
 
