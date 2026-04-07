@@ -320,6 +320,39 @@ def test_tutor_reply_to_approval_send_command_sends_directly(monkeypatch) -> Non
     assert message.answers == ["Ответ отправлен студенту."]
 
 
+def test_policy_block_off_topic_returns_scope_notice(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    message = DummyMessage(text="Как приготовить яблочный пирог?")
+
+    async def fake_load_chat_by_contact(*args, **kwargs):
+        return SimpleNamespace(mode=OperatingMode.AUTO)
+
+    async def fake_update_metadata(*args, **kwargs):
+        return None
+
+    async def fake_audit_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(messages, "audit_log", fake_audit_log)
+    monkeypatch.setattr(messages.conversations, "load_chat_by_contact", fake_load_chat_by_contact)
+    monkeypatch.setattr(messages.conversations, "update_metadata", fake_update_metadata)
+
+    asyncio.run(
+        messages._apply_policy_result(
+            message=message,
+            booking={"booking_id": "booking-1", "status": "active"},
+            contact={"id": 9, "name": "Ivan Petrov"},
+            response={"action": "answer", "content": "Вот рецепт", "confidence": 0.99},
+            settings=settings,
+            booking_id="booking-1",
+            contact_id=9,
+            student_text="Как приготовить яблочный пирог?",
+        )
+    )
+
+    assert message.answers == [templates.out_of_scope_question()]
+
+
 def test_tutor_reply_routes_by_booking_id_without_pending_escalation(monkeypatch) -> None:
     settings = SimpleNamespace(state_path="/tmp/state")
     reply_to_message = SimpleNamespace(

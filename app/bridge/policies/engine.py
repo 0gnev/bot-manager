@@ -49,6 +49,9 @@ def evaluate_ai_response(
     if stop_trigger:
         return PolicyDecision("escalate", f"stop_trigger:{stop_trigger}")
 
+    if _detect_off_topic_query(student_text, policies):
+        return PolicyDecision("block", "off_topic_query")
+
     forbidden_reason = _detect_forbidden_reply(content, policies)
     if forbidden_reason:
         return PolicyDecision("escalate", f"forbidden_reply:{forbidden_reason}")
@@ -104,3 +107,17 @@ def _detect_forbidden_reply(content: str, policies: PolicySet) -> str | None:
         if any(pattern in lowered for pattern in patterns):
             return reason
     return None
+
+
+def _detect_off_topic_query(student_text: str, policies: PolicySet) -> bool:
+    text = (student_text or "").strip().lower()
+    if not text:
+        return False
+
+    if any(keyword.lower() in text for keyword in policies.scope.domain_keywords):
+        return False
+
+    if any(prefix.lower() in text for prefix in policies.scope.generic_howto_prefixes):
+        return True
+
+    return any(keyword.lower() in text for keyword in policies.scope.obvious_off_topic_keywords)

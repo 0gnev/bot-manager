@@ -237,6 +237,9 @@ async def _apply_policy_result(
         return
 
     logger.warning("Policy blocked outbound reply: booking=%s reason=%s", booking_id, decision.reason)
+    if decision.reason == "off_topic_query":
+        await message.answer(templates.out_of_scope_question())
+        return
     await message.answer("Сейчас я не могу ответить автоматически.")
 
 
