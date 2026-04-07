@@ -377,15 +377,6 @@ async def revise_pending_approval(
     if not revision:
         return None
 
-    if revision["decision"] == "send":
-        sent = await edit_and_approve(approval_id, revision["content"], settings)
-        if not sent:
-            return None
-        return {
-            "decision": "send",
-            "content": revision["content"],
-        }
-
     previous_tutor_message_id = data.get("tutor_message_id")
     if previous_tutor_message_id:
         try:

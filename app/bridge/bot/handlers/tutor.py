@@ -166,10 +166,7 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
                 "Попробуйте ещё раз или отправьте финальный текст через /send."
             )
             return
-        if result["decision"] == "send":
-            await message.answer("Ответ отправлен студенту.")
-        else:
-            await message.answer("Черновик обновлён. Проверьте новый вариант выше.")
+        await message.answer("Черновик обновлён. Проверьте новый вариант выше.")
         return
 
     # Otherwise check escalations (existing behaviour)

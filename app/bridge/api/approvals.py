@@ -6,7 +6,8 @@ Endpoints:
   GET  /api/approvals/{id}                — get one approval
   POST /api/approvals/{id}/approve        — approve a draft
   POST /api/approvals/{id}/reject         — reject a draft
-  POST /api/approvals/{id}/edit-approve   — edit and approve a draft
+  POST /api/approvals/{id}/revise         — revise a draft and keep it pending
+  POST /api/approvals/{id}/edit-approve   — send explicit tutor text to the student
 
 Auth: Bearer token (tutor_api_token; falls back to gateway_auth_token).
 """
@@ -160,6 +161,38 @@ async def reject_endpoint(
 
 
 @router.post(
+    "/{approval_id}/revise",
+    dependencies=[Depends(_verify_token)],
+)
+async def revise_endpoint(
+    approval_id: str,
+    body: EditApprovalRequest,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Revise a pending draft and keep it in the approval queue."""
+    data = await approvals.get_approval(settings.state_path, approval_id)
+    if not data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Approval not found")
+    if data.get("status") != "pending":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Approval already resolved")
+
+    result = await approval_handler.revise_pending_approval(approval_id, body.text, settings)
+    if not result:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to revise draft",
+        )
+
+    updated = await approvals.get_approval(settings.state_path, approval_id)
+    return {
+        "ok": True,
+        "approval_id": approval_id,
+        "status": updated["status"] if updated else "pending",
+        "draft_content": result["content"],
+    }
+
+
+@router.post(
     "/{approval_id}/edit-approve",
     dependencies=[Depends(_verify_token)],
 )
@@ -168,7 +201,7 @@ async def edit_approve_endpoint(
     body: EditApprovalRequest,
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    """Edit a pending draft and send the edited version to the student."""
+    """Send explicit tutor text to the student and resolve the draft."""
     data = await approvals.get_approval(settings.state_path, approval_id)
     if not data:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Approval not found")

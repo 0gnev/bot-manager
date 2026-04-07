@@ -73,6 +73,10 @@ Why this matters:
 - approval cards now include inline approve/reject buttons
 - plain tutor reply to an approval card means “revise the draft and show me the next version”
 - tutor must use `/send ...` in a reply to an approval card when exact text should go to the student immediately
+- REST flow follows the same split:
+  - `POST /api/approvals/{id}/approve` sends the current draft as-is
+  - `POST /api/approvals/{id}/revise` rewrites the draft but keeps it pending
+  - `POST /api/approvals/{id}/edit-approve` sends explicit tutor text immediately
 
 Relevant files:
 
