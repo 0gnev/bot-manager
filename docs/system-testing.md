@@ -102,6 +102,25 @@ Remote wrapper:
 - These tests are deterministic only because Telegram and OpenClaw are faked.
   They do not talk to real Telegram or real AI providers.
 
+## Live LLM smoke testing
+
+For real-provider validation there is a separate manual GitHub Actions workflow:
+
+- `Live LLM Smoke`
+
+It uses the real `openclaw` container and a single opt-in smoke test:
+
+- [tests/live/test_openclaw_live.py](/private/var/www/bot-manager/tests/live/test_openclaw_live.py)
+
+That test is marked with `@pytest.mark.live_llm` and is skipped unless
+`RUN_LIVE_LLM_TESTS=1` is set.
+
+This separation is intentional:
+
+- deterministic tests stay stable in normal `CI`
+- live-provider/auth failures are isolated to a manual smoke run
+- model output is checked only at the behavior level, not by exact wording
+
 ## When to use which test
 
 - `task test`: before merge or after significant changes

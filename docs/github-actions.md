@@ -1,9 +1,11 @@
 # GitHub Actions CI/CD
 
-This project uses two GitHub Actions workflows:
+This project uses three GitHub Actions workflows:
 
 - `CI`: installs Python dependencies, runs `pytest`, and validates the Bridge Docker image build
 - `CD`: deploys `main` to the production server after CI succeeds
+- `Live LLM Smoke`: manually starts a real `openclaw` container and runs one
+  opt-in smoke test against the configured provider
 
 ## Required repository secrets
 
@@ -15,6 +17,8 @@ Add these secrets in GitHub:
 - `DEPLOY_SSH_KEY`: private SSH key used by GitHub Actions
 - `DEPLOY_KNOWN_HOSTS`: pinned `known_hosts` entry for the server
 - `DEPLOY_PORT`: optional SSH port, defaults to `22`
+- `OPENAI_API_KEY`: required for the `Live LLM Smoke` workflow
+- `GATEWAY_AUTH_TOKEN`: required for the `Live LLM Smoke` workflow
 
 ## How deploy works
 
@@ -41,6 +45,23 @@ deployed code is actually picked up.
 service. `CD` no longer re-runs the full test suite on the production server,
 because the PostgreSQL-backed tests require separate test infrastructure and were
 causing deploys to fail before container recreation.
+
+## Live LLM smoke workflow
+
+`Live LLM Smoke` is intentionally separate from `CI`.
+
+It is manual-only and should be used when you want to verify that:
+
+- `openclaw` boots with the intended project config
+- the configured provider credentials are valid
+- a simple known booking question does not immediately fall back to escalation
+
+It runs:
+
+- the real `alpine/openclaw` container from [compose.yaml](/private/var/www/bot-manager/compose.yaml)
+- the live test [test_openclaw_live.py](/private/var/www/bot-manager/tests/live/test_openclaw_live.py)
+
+It does not replace the deterministic `CI` suite.
 
 ## Recommended GitHub environment setup
 
