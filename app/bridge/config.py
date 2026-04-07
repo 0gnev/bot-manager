@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     # ── OpenClaw ──────────────────────────────────────────────────────────────
     gateway_auth_token: str      # OpenClaw gateway HTTP API
     openclaw_base_url: str = "http://openclaw:18789"
+    openclaw_gateway_model: str = "openclaw"
 
     # ── Tutor API ─────────────────────────────────────────────────────────────
     tutor_api_token: str = ""    # Separate auth for /api/tutor/* endpoints

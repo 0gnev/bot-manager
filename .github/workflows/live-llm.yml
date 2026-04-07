@@ -103,6 +103,8 @@ jobs:
           RUN_LIVE_LLM_TESTS: "1"
           OPENCLAW_BASE_URL: http://127.0.0.1:18789
           GATEWAY_AUTH_TOKEN: ${{ env.GATEWAY_AUTH_TOKEN }}
+          AUDIT_PATH: ${{ github.workspace }}/data/audit
+          LOG_PATH: ${{ github.workspace }}/data/logs
         run: python -m pytest -q -m live_llm tests/live/test_openclaw_live.py
 
       - name: Dump OpenClaw logs on failure

@@ -15,6 +15,8 @@ class _FakeResponse:
 
 
 class _FakeAsyncClient:
+    requests: list[dict] = []
+
     def __init__(self, *args, **kwargs) -> None:
         return None
 
@@ -25,13 +27,16 @@ class _FakeAsyncClient:
         return False
 
     async def post(self, *args, **kwargs) -> _FakeResponse:
+        self.__class__.requests.append(kwargs)
         return _FakeResponse()
 
 
 def test_openclaw_invalid_json_falls_back_to_escalation(monkeypatch) -> None:
+    _FakeAsyncClient.requests = []
     settings = SimpleNamespace(
         openclaw_base_url="http://openclaw:18789",
         gateway_auth_token="token",
+        openclaw_gateway_model="openclaw",
     )
     audit_events: list[tuple[str, str, dict]] = []
 
@@ -53,6 +58,7 @@ def test_openclaw_invalid_json_falls_back_to_escalation(monkeypatch) -> None:
 
     assert result["action"] == "escalate"
     assert result["confidence"] == 0.0
+    assert _FakeAsyncClient.requests[0]["json"]["model"] == "openclaw"
     assert any(
         event_type == "ai"
         and action == "response_received"
