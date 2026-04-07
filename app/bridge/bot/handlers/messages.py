@@ -21,7 +21,7 @@ from bridge.config import Settings
 from bridge.delivery import send_student_message
 from bridge.escalation.handler import escalate
 from bridge.policies import evaluate_ai_response
-from bridge.state import approvals, bookings, contacts, conversations, escalations, load_controls, OperatingMode
+from bridge.state import bookings, contacts, conversations, escalations, load_controls, OperatingMode
 from obsidian_adapter.reader import search as knowledge_search
 from telegram_adapter import templates
 
@@ -222,19 +222,6 @@ async def _resume_stale_automation_if_needed(
     chat,
 ):
     if chat.automation_enabled or chat.mode == OperatingMode.MANUAL:
-        return chat
-
-    pending_approvals = await approvals.list_pending(
-        settings.state_path,
-        booking_id=booking_id,
-        contact_id=contact_id if booking_id is None else None,
-    )
-    pending_escalations = await escalations.list_pending(
-        settings.state_path,
-        booking_id=booking_id,
-        contact_id=contact_id if booking_id is None else None,
-    )
-    if pending_approvals or pending_escalations:
         return chat
 
     logger.info(
