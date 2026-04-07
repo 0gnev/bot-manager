@@ -227,22 +227,7 @@ class FakeOpenClawState:
             self.requests.append(payload)
 
     def build_response(self, payload: dict[str, Any]) -> dict[str, Any]:
-        messages = payload.get("messages") or []
-        user_message = ""
-        for item in reversed(messages):
-            if item.get("role") != "user":
-                continue
-            content = item.get("content")
-            if isinstance(content, str):
-                user_message = content
-                break
-            if isinstance(content, list):
-                parts = []
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "text":
-                        parts.append(str(part.get("text") or ""))
-                user_message = " ".join(parts)
-                break
+        user_message = self._extract_user_message(payload)
 
         lowered = user_message.lower()
         if "нестандарт" in lowered:
@@ -270,7 +255,68 @@ class FakeOpenClawState:
                 "confidence": 0.95,
             }
 
+        if "input" in payload:
+            return {
+                "id": "resp_fake",
+                "object": "response",
+                "created_at": int(time.time()),
+                "status": "completed",
+                "model": str(payload.get("model") or "openclaw"),
+                "output": [
+                    {
+                        "type": "message",
+                        "id": "msg_fake",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": json.dumps(response, ensure_ascii=False),
+                            }
+                        ],
+                    }
+                ],
+                "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            }
+
         return {"choices": [{"message": {"content": json.dumps(response, ensure_ascii=False)}}]}
+
+    def _extract_user_message(self, payload: dict[str, Any]) -> str:
+        messages = payload.get("messages") or []
+        for item in reversed(messages):
+            if item.get("role") != "user":
+                continue
+            content = item.get("content")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                parts = []
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        parts.append(str(part.get("text") or ""))
+                if parts:
+                    return " ".join(parts)
+
+        items = payload.get("input") or []
+        if not isinstance(items, list):
+            return ""
+        for item in reversed(items):
+            if not isinstance(item, dict) or item.get("type") != "message" or item.get("role") != "user":
+                continue
+            content = item.get("content")
+            if isinstance(content, str):
+                return content
+            if not isinstance(content, list):
+                continue
+            parts = []
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "input_text":
+                    parts.append(str(part.get("text") or ""))
+            if parts:
+                return " ".join(parts)
+        return ""
 
 
 def create_fake_telegram_app(state: FakeTelegramState) -> FastAPI:
@@ -352,6 +398,12 @@ def create_fake_openclaw_app(state: FakeOpenClawState) -> FastAPI:
 
     @app.post("/v1/chat/completions")
     async def completions(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        state.record(payload)
+        return state.build_response(payload)
+
+    @app.post("/v1/responses")
+    async def responses(request: Request) -> dict[str, Any]:
         payload = await request.json()
         state.record(payload)
         return state.build_response(payload)
