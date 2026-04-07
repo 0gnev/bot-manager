@@ -12,6 +12,8 @@ Source of truth: the compact architecture prompt provided for Bot Manager.
 - [x] Move conversation routing to a contact-first model with optional booking context.
 - [x] Support contact-only escalations, approvals, and Obsidian exports without synthetic `None-*` identities.
 - [x] Add contact-scoped tutor control endpoints for mode and automation management.
+- [x] Make tutor replies to approval cards revise drafts by default, with explicit `/send` for immediate direct delivery.
+- [x] Add latency instrumentation around OpenClaw calls so slow approval / answer paths are visible in audit logs.
 
 ## Next priority tasks
 

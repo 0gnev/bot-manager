@@ -8,7 +8,7 @@ the answer back to the student via the student bot.
 Additional features:
   - /mode {booking_id} auto|semi-auto|manual — switch operating mode
   - Approval inline-button callbacks (approve/reject)
-  - Reply-to approval message = edit & approve
+  - Reply-to approval message = revise draft, unless prefixed with /send
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 router = Router(name="tutor")
 
 _BOOKING_ID_RE = re.compile(r"ID брони:\s*(?:<code>)?([A-Za-z0-9_-]+)")
+_APPROVAL_SEND_RE = re.compile(r"^/send(?:\s+|\n+)(.+)$", re.DOTALL)
 
 
 # -- /mode command -------------------------------------------------------------
@@ -143,13 +144,32 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
             approval["approval_id"],
             approval["booking_id"],
         )
-        ok = await approval_handler.edit_and_approve(
-            approval["approval_id"], message.text, settings,
+        direct_send = _APPROVAL_SEND_RE.match((message.text or "").strip())
+        if direct_send:
+            ok = await approval_handler.edit_and_approve(
+                approval["approval_id"], direct_send.group(1).strip(), settings,
+            )
+            if ok:
+                await message.answer("Ответ отправлен студенту.")
+            else:
+                await message.answer("Не удалось обработать (уже обработано?).")
+            return
+
+        result = await approval_handler.revise_pending_approval(
+            approval["approval_id"],
+            message.text,
+            settings,
         )
-        if ok:
-            await message.answer("Отредактированный ответ отправлен студенту.")
+        if not result:
+            await message.answer(
+                "Не удалось обновить черновик. "
+                "Попробуйте ещё раз или отправьте финальный текст через /send."
+            )
+            return
+        if result["decision"] == "send":
+            await message.answer("Ответ отправлен студенту.")
         else:
-            await message.answer("Не удалось обработать (уже обработано?).")
+            await message.answer("Черновик обновлён. Проверьте новый вариант выше.")
         return
 
     # Otherwise check escalations (existing behaviour)

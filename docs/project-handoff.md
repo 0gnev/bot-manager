@@ -70,6 +70,9 @@ Why this matters:
 - if OpenClaw also polls Telegram, reply routing breaks or conflicts with Bridge
 - escalation cards now include a deterministic summary, recent dialogue excerpt,
   and a draft reply when policy logic escalates an otherwise answerable message
+- approval cards now include inline approve/reject buttons
+- plain tutor reply to an approval card means “revise the draft and show me the next version”
+- tutor must use `/send ...` in a reply to an approval card when exact text should go to the student immediately
 
 Relevant files:
 

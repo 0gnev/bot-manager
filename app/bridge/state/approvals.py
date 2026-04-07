@@ -121,6 +121,33 @@ async def set_tutor_message_id(
     )
 
 
+async def update_pending_draft(
+    state_path: str,
+    approval_id: str,
+    draft_content: str,
+    *,
+    tutor_message_id: int | None = None,
+) -> dict | None:
+    pool = get_pool()
+    row = await pool.fetchrow(
+        """
+        UPDATE approvals
+        SET draft_content = $2,
+            tutor_message_id = COALESCE($3, tutor_message_id)
+        WHERE approval_id = $1
+          AND status = 'pending'
+        RETURNING *
+        """,
+        approval_id,
+        draft_content,
+        tutor_message_id,
+    )
+    if row is None:
+        return None
+    logger.info("Updated pending approval draft %s", approval_id)
+    return _row_to_dict(row)
+
+
 async def list_pending(
     state_path: str,
     booking_id: str | None = None,
