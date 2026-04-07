@@ -193,8 +193,6 @@ def test_tutor_reply_supports_contact_only_escalation(monkeypatch) -> None:
 
 
 def test_list_escalations_parses_relevant_history_json(monkeypatch) -> None:
-    import bridge.db as bridge_db
-
     async def fake_fetch(*args, **kwargs):
         return [
             {
@@ -219,11 +217,7 @@ def test_list_escalations_parses_relevant_history_json(monkeypatch) -> None:
             }
         ]
 
-    monkeypatch.setattr(
-        bridge_db,
-        "get_pool",
-        lambda: SimpleNamespace(fetch=fake_fetch),
-    )
+    monkeypatch.setattr(tutor_api, "get_pool", lambda: SimpleNamespace(fetch=fake_fetch))
 
     result = asyncio.run(tutor_api.list_escalations())
 
@@ -231,6 +225,86 @@ def test_list_escalations_parses_relevant_history_json(monkeypatch) -> None:
     assert result[0]["student_name"] == "Student"
     assert result[0]["relevant_history"][0]["content"] == "Здравствуйте"
     assert result[0]["draft_reply"] == "Занятие пройдёт онлайн."
+
+
+def test_list_chat_reviews_returns_summary_rows(monkeypatch) -> None:
+    async def fake_fetch(*args, **kwargs):
+        return [
+            {
+                "contact_id": 91,
+                "contact_name": "Ivan Petrov",
+                "telegram_username": "joji5213",
+                "email": "student@example.com",
+                "mode": "auto",
+                "status": "active",
+                "automation_enabled": True,
+                "current_stage": "active_dialogue",
+                "updated_at": datetime(2026, 4, 7, 8, 30, tzinfo=timezone.utc),
+                "active_booking_id": "booking-1",
+                "active_booking_title": "Пробный урок",
+                "active_booking_start_time": datetime(2026, 4, 7, 9, 0, tzinfo=timezone.utc),
+                "last_message_content": "Очень длинное сообщение " + ("x" * 200),
+                "last_message_at": datetime(2026, 4, 7, 8, 31, tzinfo=timezone.utc),
+                "pending_escalations": 2,
+                "pending_approvals": 1,
+            }
+        ]
+
+    monkeypatch.setattr(
+        tutor_api,
+        "get_pool",
+        lambda: SimpleNamespace(fetch=fake_fetch),
+    )
+
+    result = asyncio.run(tutor_api.list_chat_reviews())
+
+    assert result[0]["contact_id"] == 91
+    assert result[0]["active_booking"]["booking_id"] == "booking-1"
+    assert result[0]["pending_escalations"] == 2
+    assert result[0]["pending_approvals"] == 1
+    assert result[0]["last_message_excerpt"].endswith("…")
+
+
+def test_get_contact_chat_review_returns_related_context(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    chat = SimpleNamespace(
+        to_dict=lambda: {"contact_id": 91, "mode": "auto", "status": "active"},
+        messages=[{"role": "user", "content": "Привет"}],
+    )
+
+    async def fake_load_contact(*args, **kwargs):
+        return {"id": 91, "name": "Ivan Petrov"}
+
+    async def fake_resolve_context(*args, **kwargs):
+        return {"booking_id": "booking-1", "title": "Пробный урок"}
+
+    async def fake_find_all_by_contact(*args, **kwargs):
+        return [{"booking_id": "booking-1"}, {"booking_id": "booking-2"}]
+
+    async def fake_load_chat_by_contact(*args, **kwargs):
+        return chat
+
+    async def fake_list_pending_escalations(*args, **kwargs):
+        return [{"escalation_id": 11}]
+
+    async def fake_list_pending_approvals(*args, **kwargs):
+        return [{"approval_id": "appr-1"}]
+
+    monkeypatch.setattr(tutor_api.contacts, "load", fake_load_contact)
+    monkeypatch.setattr(tutor_api.bookings, "resolve_context_for_contact", fake_resolve_context)
+    monkeypatch.setattr(tutor_api.bookings, "find_all_by_contact", fake_find_all_by_contact)
+    monkeypatch.setattr(tutor_api.conversations, "load_chat_by_contact", fake_load_chat_by_contact)
+    monkeypatch.setattr(tutor_api.escalations, "list_pending", fake_list_pending_escalations)
+    monkeypatch.setattr(tutor_api.approvals, "list_pending", fake_list_pending_approvals)
+
+    result = asyncio.run(tutor_api.get_contact_chat_review(91, settings))
+
+    assert result["contact"]["name"] == "Ivan Petrov"
+    assert result["active_booking"]["booking_id"] == "booking-1"
+    assert len(result["related_bookings"]) == 2
+    assert result["messages"][0]["content"] == "Привет"
+    assert result["pending_escalations"][0]["escalation_id"] == 11
+    assert result["pending_approvals"][0]["approval_id"] == "appr-1"
 
 
 def test_set_contact_chat_mode_updates_contact_scoped_chat(monkeypatch) -> None:

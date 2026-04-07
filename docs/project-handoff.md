@@ -77,6 +77,13 @@ Relevant files:
 - [config/botmanager.json](/private/var/www/bot-manager/config/botmanager.json)
 - [config/routing.json](/private/var/www/bot-manager/config/routing.json)
 - [config/openclaw.json](/private/var/www/bot-manager/config/openclaw.json)
+- [app/bridge/api/tutor.py](/private/var/www/bot-manager/app/bridge/api/tutor.py)
+
+Tutor/operator review surface now exists in the API:
+
+- `GET /api/tutor/chats` for recent contact-scoped dialogue summaries
+- `GET /api/tutor/chats/{booking_id}` for booking-scoped message review
+- `GET /api/tutor/contacts/{contact_id}/chat` for contact-scoped message review
 
 Important config constraint:
 
