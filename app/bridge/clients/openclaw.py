@@ -28,6 +28,7 @@ _TIMEOUT = httpx.Timeout(60.0)
 class OpenclawClient:
     def __init__(self, settings: Settings) -> None:
         self._base_url = settings.openclaw_base_url.rstrip("/")
+        self._model = getattr(settings, "openclaw_gateway_model", "openclaw")
         self._headers = {
             "Authorization": f"Bearer {settings.gateway_auth_token}",
             "Content-Type": "application/json",
@@ -131,7 +132,7 @@ class OpenclawClient:
         return messages
 
     async def _complete(self, messages: list[dict]) -> dict:
-        payload = {"model": "default", "messages": messages}
+        payload = {"model": self._model, "messages": messages}
         url = f"{self._base_url}/v1/chat/completions"
         await audit_log("ai", "call_made", actor="system", detail={"url": url})
         try:
@@ -177,7 +178,7 @@ class OpenclawClient:
             return _fallback()
 
     async def _complete_text(self, messages: list[dict]) -> str:
-        payload = {"model": "default", "messages": messages}
+        payload = {"model": self._model, "messages": messages}
         url = f"{self._base_url}/v1/chat/completions"
         await audit_log("ai", "call_made", actor="system", detail={"url": url, "mode": "tutor_assistant"})
         try:
