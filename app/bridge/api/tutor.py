@@ -22,8 +22,10 @@ from pydantic import BaseModel
 from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.config import Settings, get_settings
+from bridge.db import get_pool
 from bridge.delivery import send_student_message
 from bridge.state import (
+    approvals,
     bookings,
     contacts,
     conversations,
@@ -49,6 +51,21 @@ def _reply_target_label(booking_id: str | None, contact: dict | None = None) -> 
         if contact_id is not None:
             return f"контакт: {contact_id}"
     return "общий вопрос"
+
+
+def _serialize_ts(value):
+    if value is not None and hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
+
+
+def _excerpt(text: str | None, limit: int = 160) -> str:
+    if not text:
+        return ""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -370,8 +387,6 @@ async def list_escalations(
     settings: Settings = Depends(get_settings),
 ) -> list[dict]:
     """List all pending escalations with booking context."""
-    from bridge.db import get_pool
-
     pool = get_pool()
     rows = await pool.fetch(
         """
@@ -409,6 +424,170 @@ async def list_escalations(
         data["event_title"] = data.get("event_title", "")
         results.append(data)
     return results
+
+
+@router.get(
+    "/chats",
+    dependencies=[Depends(_verify_token)],
+)
+async def list_chat_reviews(
+    limit: int = 50,
+    settings: Settings = Depends(get_settings),
+) -> list[dict]:
+    """List tutor-facing conversation summaries without reading raw state files."""
+    pool = get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT
+            c.id AS contact_id,
+            c.name AS contact_name,
+            c.telegram_username,
+            c.email,
+            c.mode,
+            c.status,
+            c.automation_enabled,
+            c.current_stage,
+            c.updated_at,
+            c.active_booking_id,
+            b.title AS active_booking_title,
+            b.start_time AS active_booking_start_time,
+            lm.content AS last_message_content,
+            lm.created_at AS last_message_at,
+            COALESCE(es.pending_count, 0) AS pending_escalations,
+            COALESCE(ap.pending_count, 0) AS pending_approvals
+        FROM contacts c
+        LEFT JOIN bookings b ON b.booking_id = c.active_booking_id
+        LEFT JOIN LATERAL (
+            SELECT m.content, m.created_at
+            FROM messages m
+            WHERE m.contact_id = c.id
+            ORDER BY m.created_at DESC
+            LIMIT 1
+        ) lm ON TRUE
+        LEFT JOIN (
+            SELECT contact_id, COUNT(*) AS pending_count
+            FROM escalations
+            WHERE status = 'pending' AND contact_id IS NOT NULL
+            GROUP BY contact_id
+        ) es ON es.contact_id = c.id
+        LEFT JOIN (
+            SELECT contact_id, COUNT(*) AS pending_count
+            FROM approvals
+            WHERE status = 'pending' AND contact_id IS NOT NULL
+            GROUP BY contact_id
+        ) ap ON ap.contact_id = c.id
+        WHERE EXISTS (SELECT 1 FROM messages m WHERE m.contact_id = c.id)
+           OR EXISTS (SELECT 1 FROM bookings b2 WHERE b2.contact_id = c.id)
+        ORDER BY COALESCE(lm.created_at, c.updated_at) DESC, c.id DESC
+        LIMIT $1
+        """,
+        limit,
+    )
+
+    return [
+        {
+            "contact_id": row["contact_id"],
+            "contact_name": row["contact_name"],
+            "telegram_username": row["telegram_username"],
+            "email": row["email"],
+            "mode": row["mode"],
+            "status": row["status"],
+            "automation_enabled": row["automation_enabled"],
+            "current_stage": row["current_stage"],
+            "updated_at": _serialize_ts(row["updated_at"]),
+            "active_booking": (
+                {
+                    "booking_id": row["active_booking_id"],
+                    "title": row["active_booking_title"],
+                    "start_time": _serialize_ts(row["active_booking_start_time"]),
+                }
+                if row["active_booking_id"]
+                else None
+            ),
+            "last_message_excerpt": _excerpt(row["last_message_content"]),
+            "last_message_at": _serialize_ts(row["last_message_at"]),
+            "pending_escalations": row["pending_escalations"],
+            "pending_approvals": row["pending_approvals"],
+        }
+        for row in rows
+    ]
+
+
+@router.get(
+    "/chats/{booking_id}",
+    dependencies=[Depends(_verify_token)],
+)
+async def get_chat_review(
+    booking_id: str,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Return booking-scoped conversation review payload."""
+    booking = await bookings.load(settings.state_path, booking_id)
+    if not booking:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    contact = None
+    contact_id = booking.get("contact_id")
+    if contact_id is not None:
+        contact = await contacts.load(settings.state_path, contact_id)
+
+    chat = await conversations.load_chat(settings.state_path, booking_id)
+    return {
+        "booking_id": booking_id,
+        "contact_id": contact_id,
+        "booking": booking,
+        "contact": contact,
+        "chat": chat.to_dict(),
+        "messages": chat.messages,
+        "pending_escalations": await escalations.list_pending(
+            settings.state_path,
+            booking_id=booking_id,
+        ),
+        "pending_approvals": await approvals.list_pending(
+            settings.state_path,
+            booking_id=booking_id,
+        ),
+    }
+
+
+@router.get(
+    "/contacts/{contact_id}/chat",
+    dependencies=[Depends(_verify_token)],
+)
+async def get_contact_chat_review(
+    contact_id: int,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Return contact-scoped conversation review payload."""
+    contact = await contacts.load(settings.state_path, contact_id)
+    if not contact:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Contact not found")
+
+    active_booking = await bookings.resolve_context_for_contact(
+        settings.state_path,
+        contact_id,
+    )
+    chat = await conversations.load_chat_by_contact(settings.state_path, contact_id)
+    return {
+        "contact_id": contact_id,
+        "contact": contact,
+        "active_booking": active_booking,
+        "related_bookings": await bookings.find_all_by_contact(
+            settings.state_path,
+            contact_id,
+            active_only=False,
+        ),
+        "chat": chat.to_dict(),
+        "messages": chat.messages,
+        "pending_escalations": await escalations.list_pending(
+            settings.state_path,
+            contact_id=contact_id,
+        ),
+        "pending_approvals": await approvals.list_pending(
+            settings.state_path,
+            contact_id=contact_id,
+        ),
+    }
 
 
 @router.get(

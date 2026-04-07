@@ -20,7 +20,7 @@ Source of truth: the compact architecture prompt provided for Bot Manager.
 - [x] Add a dedicated `contacts` entity aligned with the architecture instead of keeping contact data only inside booking payloads.
 - [x] Expand stored message records to include direction, attachments, model output, delivery status, and transport IDs.
 - [x] Enrich escalation packages with summary, relevant conversation history, and draft reply when available.
-- [ ] Add tutor-facing dialogue review/list endpoints so conversations can be reviewed without reading raw state files.
+- [x] Add tutor-facing dialogue review/list endpoints so conversations can be reviewed without reading raw state files.
 - [ ] Tighten student-booking linking to a stronger deeplink or signed-token flow instead of username fallback.
 - [ ] Add retry/backoff policy around outbound Telegram delivery and OpenClaw calls.
 - [ ] Add an explicit emergency-stop/admin control surface beyond raw REST toggles.
