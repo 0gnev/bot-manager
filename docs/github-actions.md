@@ -71,6 +71,11 @@ environment binding is missing.
 GitHub secret. That is intentional: the token is only used inside the single
 runner job between the temporary `openclaw` container and the smoke test.
 
+The workflow also copies [openclaw.json](/private/var/www/bot-manager/config/openclaw.json)
+into a writable runtime path under `data/openclaw/` before starting the
+container. This avoids OpenClaw startup failures when it tries to persist
+plugin auto-enable state back into `OPENCLAW_CONFIG_PATH`.
+
 ## Recommended GitHub environment setup
 
 Create a `production` environment in GitHub and attach the deploy secrets to it.

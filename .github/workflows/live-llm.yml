@@ -54,7 +54,7 @@ jobs:
           PLANERKA_WEBHOOK_SECRET=dummy
           GATEWAY_AUTH_TOKEN=${GATEWAY_AUTH_TOKEN}
           TUTOR_API_TOKEN=dummy
-          OPENCLAW_CONFIG_PATH=/workspace/config/openclaw.json
+          OPENCLAW_CONFIG_PATH=/workspace/live-llm/openclaw.json
           OBSIDIAN_SOURCE_PATH=/tmp/obsidian
           KNOWLEDGE_MIRROR_PATH=/workspace/data/knowledge
           DATABASE_URL=postgresql://bridge:bridge@postgres:5432/bridge
@@ -62,6 +62,11 @@ jobs:
           LOG_PATH=/workspace/data/logs
           LOG_LEVEL=INFO
           EOF
+
+      - name: Prepare writable OpenClaw runtime config
+        run: |
+          mkdir -p data/openclaw/live-llm
+          cp config/openclaw.json data/openclaw/live-llm/openclaw.json
 
       - name: Start OpenClaw
         run: docker compose --env-file .env up -d openclaw
