@@ -22,6 +22,7 @@ services:
     env_file:
       - .env
     volumes:
+      - ./config:/workspace/config:ro
       - ./config/openclaw.json:/root/.openclaw/openclaw.json:ro
       - ./data/openclaw:/workspace
     ports:

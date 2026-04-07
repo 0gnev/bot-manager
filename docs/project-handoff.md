@@ -231,9 +231,14 @@ OpenClaw has two configuration layers:
 
 - repo config: `config/openclaw.json`
 - persisted runtime config: `data/openclaw/config/openclaw.json`
+- runtime env path: `OPENCLAW_CONFIG_PATH` (defaults to `/workspace/config/openclaw.json`)
 
 Even if the repo config has Telegram disabled, the persisted OpenClaw runtime
 config may still have Telegram enabled.
+
+The Docker service must mount `./config` into `/workspace/config`, otherwise
+OpenClaw can start without the intended repo config and fall back to its own
+internal defaults.
 
 If that happens, OpenClaw will start its own Telegram provider and cause polling
 conflicts with Bridge.
