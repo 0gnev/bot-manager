@@ -522,7 +522,7 @@ async def _maybe_export_dialogue(
         logger.info("Tutor dialogue export sent: booking=%s messages=%s", booking_id, len(chat.messages))
         return True
 
-    target = _extract_dialog_export_target(text)
+    target = request_text.strip() if force and request_text else _extract_dialog_export_target(text)
     if not target:
         await message.answer(
             "Укажите, чей диалог выгрузить: username, e-mail, имя контакта или booking_id."
