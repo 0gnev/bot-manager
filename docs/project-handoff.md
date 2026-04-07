@@ -74,6 +74,12 @@ Relevant files:
 - [config/routing.json](/private/var/www/bot-manager/config/routing.json)
 - [config/openclaw.json](/private/var/www/bot-manager/config/openclaw.json)
 
+Important config constraint:
+
+- `config/openclaw.json` must stay strict JSON
+- do not add pseudo-comment keys such as `$comment`
+- recent OpenClaw builds reject unknown root keys during startup
+
 ## 3. Environment variables you must preserve
 
 Use `.env.example` as the reference schema.
