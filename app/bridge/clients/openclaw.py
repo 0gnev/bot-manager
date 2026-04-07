@@ -1,7 +1,7 @@
 """
 HTTP client for the OpenClaw AI gateway.
 
-Uses the OpenAI-compatible /v1/chat/completions endpoint.
+Uses the OpenResponses-compatible /v1/responses endpoint.
 The system prompt instructs the model to return structured JSON:
   {"action": "answer"|"clarify"|"escalate", "content": "...", "confidence": 0.0-1.0}
 """
@@ -11,7 +11,9 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -132,17 +134,30 @@ class OpenclawClient:
         return messages
 
     async def _complete(self, messages: list[dict]) -> dict:
-        payload = {"model": self._model, "messages": messages}
-        url = f"{self._base_url}/v1/chat/completions"
+        payload = {
+            "model": self._model,
+            "input": _messages_to_responses_input(messages),
+            "reasoning": {"effort": "low"},
+        }
+        url = f"{self._base_url}/v1/responses"
         await audit_log("ai", "call_made", actor="system", detail={"url": url})
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
                 resp = await client.post(url, json=payload, headers=self._headers)
                 resp.raise_for_status()
-                raw: str = resp.json()["choices"][0]["message"]["content"]
-                try:
-                    result = json.loads(raw)
-                except json.JSONDecodeError:
+                raw = _extract_response_text(resp.json())
+                if raw is None:
+                    logger.warning("Openclaw returned no text payload, falling back to escalation")
+                    await audit_log(
+                        "ai",
+                        "response_received",
+                        actor="system",
+                        outcome="failure",
+                        detail={"error": "missing_text_payload"},
+                    )
+                    return _fallback()
+                result = _coerce_structured_response(raw)
+                if result is None:
                     logger.warning("Openclaw returned non-JSON, falling back to escalation")
                     await audit_log(
                         "ai",
@@ -178,14 +193,28 @@ class OpenclawClient:
             return _fallback()
 
     async def _complete_text(self, messages: list[dict]) -> str:
-        payload = {"model": self._model, "messages": messages}
-        url = f"{self._base_url}/v1/chat/completions"
+        payload = {
+            "model": self._model,
+            "input": _messages_to_responses_input(messages),
+            "reasoning": {"effort": "low"},
+        }
+        url = f"{self._base_url}/v1/responses"
         await audit_log("ai", "call_made", actor="system", detail={"url": url, "mode": "tutor_assistant"})
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
                 resp = await client.post(url, json=payload, headers=self._headers)
                 resp.raise_for_status()
-                raw = resp.json()["choices"][0]["message"]["content"]
+                raw = _extract_response_text(resp.json())
+                if raw is None:
+                    logger.warning("Openclaw returned no text payload for tutor assistant")
+                    await audit_log(
+                        "ai",
+                        "response_received",
+                        actor="system",
+                        outcome="failure",
+                        detail={"mode": "tutor_assistant", "error": "missing_text_payload"},
+                    )
+                    return "Не удалось сейчас ответить по базе знаний. Попробуйте переформулировать запрос."
                 text = raw.strip() if isinstance(raw, str) else str(raw)
                 await audit_log(
                     "ai",
@@ -204,6 +233,159 @@ class OpenclawClient:
                 detail={"mode": "tutor_assistant", "error": str(exc)[:200]},
             )
             return "Не удалось сейчас ответить по базе знаний. Попробуйте переформулировать запрос."
+
+
+def _messages_to_responses_input(messages: list[dict]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for message in messages:
+        role = message.get("role")
+        if role not in {"system", "developer", "user", "assistant"}:
+            continue
+        content = _message_content_to_responses_content(message.get("content"))
+        items.append(
+            {
+                "type": "message",
+                "role": role,
+                "content": content,
+            }
+        )
+    return items
+
+
+def _message_content_to_responses_content(content: Any) -> str | list[dict[str, Any]]:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return str(content)
+
+    parts: list[dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        part_type = part.get("type")
+        if part_type == "text":
+            parts.append({"type": "input_text", "text": str(part.get("text") or "")})
+            continue
+        if part_type != "image_url":
+            continue
+
+        image_url = part.get("image_url") or {}
+        url = image_url.get("url")
+        if not isinstance(url, str) or not url:
+            continue
+        if url.startswith("data:"):
+            header, _, data = url.partition(",")
+            media_type = "image/jpeg"
+            if header.startswith("data:"):
+                media_type = header[5:].split(";", 1)[0] or media_type
+            parts.append(
+                {
+                    "type": "input_image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": data,
+                    },
+                }
+            )
+            continue
+        parts.append({"type": "input_image", "source": {"type": "url", "url": url}})
+
+    return parts or ""
+
+
+def _extract_response_text(payload: dict[str, Any]) -> str | None:
+    choices = payload.get("choices")
+    if isinstance(choices, list) and choices:
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        return content if isinstance(content, str) else None
+
+    output = payload.get("output")
+    if not isinstance(output, list):
+        return None
+
+    text_chunks: list[str] = []
+    for item in output:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        content = item.get("content")
+        if isinstance(content, str):
+            text_chunks.append(content)
+            continue
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") not in {"output_text", "input_text"}:
+                continue
+            text = part.get("text")
+            if isinstance(text, str) and text:
+                text_chunks.append(text)
+
+    if not text_chunks:
+        return None
+    return "\n".join(text_chunks)
+
+
+def _coerce_structured_response(raw: str) -> dict[str, Any] | None:
+    parsed = _parse_json_object(raw)
+    if parsed is not None:
+        return parsed
+
+    stripped = raw.strip()
+    if not stripped:
+        return None
+
+    if _looks_like_escalation_text(stripped):
+        return {"action": "escalate", "content": stripped, "confidence": 0.0}
+
+    return {"action": "answer", "content": stripped, "confidence": 0.95}
+
+
+def _parse_json_object(raw: str) -> dict[str, Any] | None:
+    candidates = [raw.strip()]
+    candidates.extend(match.group(1).strip() for match in re.finditer(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL))
+
+    decoder = json.JSONDecoder()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            return parsed
+
+        for index, char in enumerate(candidate):
+            if char != "{":
+                continue
+            try:
+                parsed, _ = decoder.raw_decode(candidate[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+    return None
+
+
+def _looks_like_escalation_text(text: str) -> bool:
+    lowered = text.lower()
+    cues = (
+        "уточн",
+        "преподавател",
+        "передам",
+        "не могу ответить",
+        "не могу подсказать",
+        "не знаю",
+        "свяжитесь",
+        "human",
+        "tutor",
+        "teacher",
+    )
+    return any(cue in lowered for cue in cues)
 
 
 def _sanitize_booking(booking: dict | None) -> dict | None:
