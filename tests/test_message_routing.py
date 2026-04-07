@@ -202,6 +202,44 @@ def test_semi_auto_without_booking_submits_contact_only_approval(monkeypatch) ->
     assert message.answers == ["Ваш преподаватель проверит ответ и отправит его вручную."]
 
 
+def test_stale_chat_with_pending_escalation_is_auto_resumed(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    updated: dict[str, object] = {}
+
+    async def fail_if_called(*args, **kwargs):
+        raise AssertionError("Pending queues must not block stale auto-resume")
+
+    async def fake_update_metadata(*args, **kwargs):
+        updated.update(kwargs)
+        return SimpleNamespace(
+            mode=OperatingMode.AUTO,
+            automation_enabled=True,
+            status="active",
+            current_stage="automation_auto_resumed",
+        )
+
+    monkeypatch.setattr(messages.escalations, "list_pending", fail_if_called)
+    monkeypatch.setattr(messages.conversations, "update_metadata", fake_update_metadata)
+
+    resumed = asyncio.run(
+        messages._resume_stale_automation_if_needed(
+            settings,
+            booking_id="booking-1",
+            contact_id=41,
+            chat=SimpleNamespace(
+                mode=OperatingMode.AUTO,
+                automation_enabled=False,
+            ),
+        )
+    )
+
+    assert resumed.automation_enabled is True
+    assert updated["booking_id"] == "booking-1"
+    assert updated["contact_id"] == 41
+    assert updated["status"] == "active"
+    assert updated["current_stage"] == "automation_auto_resumed"
+
+
 def test_tutor_reply_reports_unmatched_escalation(monkeypatch) -> None:
     settings = SimpleNamespace(state_path="/tmp/state")
     reply_to_message = SimpleNamespace(
