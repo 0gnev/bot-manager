@@ -14,6 +14,7 @@ env:
 jobs:
   live-llm-smoke:
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -24,15 +25,20 @@ jobs:
       - name: Validate required secrets
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
         run: |
           test -n "$OPENAI_API_KEY" || { echo "OPENAI_API_KEY is required"; exit 1; }
-          test -n "$GATEWAY_AUTH_TOKEN" || { echo "GATEWAY_AUTH_TOKEN is required"; exit 1; }
+
+      - name: Generate ephemeral gateway token
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import secrets
+          print(f"GATEWAY_AUTH_TOKEN={secrets.token_hex(24)}")
+          PY
 
       - name: Create workflow env file
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
+          GATEWAY_AUTH_TOKEN: ${{ env.GATEWAY_AUTH_TOKEN }}
         run: |
           cat > .env <<EOF
           PROJECT_NAME=bot-manager
@@ -91,13 +97,23 @@ jobs:
           PYTHONPATH: app
           RUN_LIVE_LLM_TESTS: "1"
           OPENCLAW_BASE_URL: http://127.0.0.1:18789
-          GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
+          GATEWAY_AUTH_TOKEN: ${{ env.GATEWAY_AUTH_TOKEN }}
         run: python -m pytest -q -m live_llm tests/live/test_openclaw_live.py
 
       - name: Dump OpenClaw logs on failure
         if: failure()
-        run: docker compose --env-file .env logs --tail=200 openclaw || true
+        run: |
+          if [ -f .env ]; then
+            docker compose --env-file .env logs --tail=200 openclaw || true
+          else
+            echo ".env was not created; skipping OpenClaw log dump"
+          fi
 
       - name: Stop OpenClaw
         if: always()
-        run: docker compose --env-file .env down --remove-orphans
+        run: |
+          if [ -f .env ]; then
+            docker compose --env-file .env down --remove-orphans
+          else
+            echo ".env was not created; skipping docker compose down"
+          fi
