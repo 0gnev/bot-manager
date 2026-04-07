@@ -18,7 +18,6 @@ Add these secrets in GitHub:
 - `DEPLOY_KNOWN_HOSTS`: pinned `known_hosts` entry for the server
 - `DEPLOY_PORT`: optional SSH port, defaults to `22`
 - `OPENAI_API_KEY`: required for the `Live LLM Smoke` workflow
-- `GATEWAY_AUTH_TOKEN`: required for the `Live LLM Smoke` workflow
 
 ## How deploy works
 
@@ -62,6 +61,15 @@ It runs:
 - the live test [test_openclaw_live.py](/private/var/www/bot-manager/tests/live/test_openclaw_live.py)
 
 It does not replace the deterministic `CI` suite.
+
+The workflow is attached to the `production` GitHub environment so it can reuse
+the same provider secrets as deploy. If those secrets are stored only at the
+environment level, the job will fail fast during secret validation when the
+environment binding is missing.
+
+`GATEWAY_AUTH_TOKEN` is generated per workflow run and is not stored as a
+GitHub secret. That is intentional: the token is only used inside the single
+runner job between the temporary `openclaw` container and the smoke test.
 
 ## Recommended GitHub environment setup
 
