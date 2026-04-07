@@ -13,6 +13,7 @@ Auth: Bearer token (tutor_api_token; falls back to gateway_auth_token).
 
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -390,10 +391,15 @@ async def list_escalations(
             val = data.get(ts_field)
             if val is not None and hasattr(val, "isoformat"):
                 data[ts_field] = val.isoformat()
+        relevant_history = data.get("relevant_history")
+        if isinstance(relevant_history, str):
+            try:
+                data["relevant_history"] = json.loads(relevant_history)
+            except (json.JSONDecodeError, TypeError):
+                pass
         data["escalation_id"] = data.pop("id")
         attendee = data.pop("attendee", None) or {}
         if isinstance(attendee, str):
-            import json
             try:
                 attendee = json.loads(attendee)
             except (json.JSONDecodeError, TypeError):

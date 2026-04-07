@@ -19,7 +19,7 @@ from bridge.bot import registry
 from bridge.clients.openclaw import OpenclawClient
 from bridge.config import Settings
 from bridge.delivery import send_student_message
-from bridge.escalation.handler import escalate
+from bridge.escalation.handler import escalate, prepare_escalation_package
 from bridge.policies import evaluate_ai_response
 from bridge.state import bookings, contacts, conversations, escalations, load_controls, OperatingMode
 from obsidian_adapter.reader import search as knowledge_search
@@ -62,7 +62,15 @@ async def _handle_ai_response(
     content = response.get("content", "")
 
     if action == "escalate":
-        await escalate(message, booking, contact, content, settings)
+        await escalate(
+            message,
+            booking,
+            contact,
+            content,
+            settings,
+            reason="model_requested_escalation",
+            ai_response=response,
+        )
     elif action == "clarify":
         await send_student_message(
             bot=message.bot,
@@ -106,7 +114,15 @@ async def _handle_semi_auto(
 
     # Escalations bypass draft approval
     if action == "escalate":
-        await escalate(message, booking, contact, student_text, settings)
+        await escalate(
+            message,
+            booking,
+            contact,
+            student_text,
+            settings,
+            reason="model_requested_escalation",
+            ai_response=response,
+        )
         return
 
     # Submit for approval via the approvals queue
@@ -209,7 +225,15 @@ async def _apply_policy_result(
         return
 
     if decision.route == "escalate":
-        await escalate(message, booking, contact, student_text, settings)
+        await escalate(
+            message,
+            booking,
+            contact,
+            student_text,
+            settings,
+            reason=decision.reason,
+            ai_response=response,
+        )
         return
 
     logger.warning("Policy blocked outbound reply: booking=%s reason=%s", booking_id, decision.reason)
@@ -256,6 +280,20 @@ async def _handle_manual(
     """In manual mode: acknowledge and forward to tutor."""
     await message.answer("Ваш преподаватель ответит в ближайшее время.")
     tutor_chat_id = getattr(settings, "tutor_chat_id", None)
+    reason = {
+        "global-stop": "global_automation_disabled",
+        "chat-stop": "chat_automation_disabled",
+        "manual": "manual_mode",
+    }.get(context_label, "human_review_required")
+    package = await prepare_escalation_package(
+        settings,
+        booking=booking,
+        contact=contact,
+        question=student_text,
+        booking_id=booking_id,
+        contact_id=contact_id,
+        reason=reason,
+    )
 
     attendee = (booking or {}).get("attendee") or {}
     notice = templates.manual_escalation_notice(
@@ -270,16 +308,13 @@ async def _handle_manual(
         student_telegram=attendee.get("telegram") or contact.get("telegram_username"),
         student_time_zone=attendee.get("timeZone") or contact.get("time_zone"),
         student_telegram_user_id=(booking or {}).get("telegram_user_id") or contact.get("telegram_user_id"),
+        summary=package["summary"],
+        relevant_history=package["relevant_history"],
+        draft_reply=package["draft_reply"],
     )
     sent = await _notify_tutor(settings, booking_id, notice)
     if sent is None:
         return
-
-    reason = {
-        "global-stop": "global_automation_disabled",
-        "chat-stop": "chat_automation_disabled",
-        "manual": "manual_mode",
-    }.get(context_label, "human_review_required")
 
     await escalations.create(
         settings.state_path,
@@ -288,6 +323,9 @@ async def _handle_manual(
         question=student_text,
         tutor_message_id=sent.message_id,
         reason=reason,
+        summary=package["summary"],
+        relevant_history=package["relevant_history"],
+        draft_reply=package["draft_reply"],
     )
     await conversations.update_metadata(
         settings.state_path,

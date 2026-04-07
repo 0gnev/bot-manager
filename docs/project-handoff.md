@@ -68,6 +68,8 @@ Why this matters:
 
 - tutor `reply` to a student escalation card must be handled by Bot Manager
 - if OpenClaw also polls Telegram, reply routing breaks or conflicts with Bridge
+- escalation cards now include a deterministic summary, recent dialogue excerpt,
+  and a draft reply when policy logic escalates an otherwise answerable message
 
 Relevant files:
 

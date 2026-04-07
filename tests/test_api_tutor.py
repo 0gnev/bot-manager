@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from fastapi import HTTPException
@@ -189,6 +190,47 @@ def test_tutor_reply_supports_contact_only_escalation(monkeypatch) -> None:
     assert metadata_updates
     assert metadata_updates[0]["contact_id"] == 91
     assert "automation_enabled" not in metadata_updates[0]
+
+
+def test_list_escalations_parses_relevant_history_json(monkeypatch) -> None:
+    import bridge.db as bridge_db
+
+    async def fake_fetch(*args, **kwargs):
+        return [
+            {
+                "id": 12,
+                "booking_id": "booking-1",
+                "contact_id": 91,
+                "status": "pending",
+                "reason": "policy_low_confidence",
+                "question": "Как проходит занятие?",
+                "summary": "Контекст: занятие. Причина: низкая уверенность ответа.",
+                "relevant_history": '[{"role":"user","content":"Здравствуйте"}]',
+                "draft_reply": "Занятие пройдёт онлайн.",
+                "tutor_message_id": 100,
+                "tutor_reply": None,
+                "resolved_by": None,
+                "created_at": datetime(2026, 4, 7, 8, 0, tzinfo=timezone.utc),
+                "resolved_at": None,
+                "event_title": "Пробный урок",
+                "attendee": '{"name":"Student"}',
+                "contact_name": "Student",
+                "telegram_username": "student",
+            }
+        ]
+
+    monkeypatch.setattr(
+        bridge_db,
+        "get_pool",
+        lambda: SimpleNamespace(fetch=fake_fetch),
+    )
+
+    result = asyncio.run(tutor_api.list_escalations())
+
+    assert result[0]["escalation_id"] == 12
+    assert result[0]["student_name"] == "Student"
+    assert result[0]["relevant_history"][0]["content"] == "Здравствуйте"
+    assert result[0]["draft_reply"] == "Занятие пройдёт онлайн."
 
 
 def test_set_contact_chat_mode_updates_contact_scoped_chat(monkeypatch) -> None:

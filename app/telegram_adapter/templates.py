@@ -125,6 +125,9 @@ def escalation_notice(
     student_telegram: str | None = None,
     student_time_zone: str | None = None,
     student_telegram_user_id: int | None = None,
+    summary: str | None = None,
+    relevant_history: list[dict] | None = None,
+    draft_reply: str | None = None,
 ) -> str:
     return tutor_notice(
         header="Новое сообщение от студента",
@@ -138,6 +141,9 @@ def escalation_notice(
         student_telegram=student_telegram,
         student_time_zone=student_time_zone,
         student_telegram_user_id=student_telegram_user_id,
+        summary=summary,
+        relevant_history=relevant_history,
+        draft_reply=draft_reply,
     )
 
 
@@ -154,6 +160,9 @@ def manual_escalation_notice(
     student_telegram: str | None = None,
     student_time_zone: str | None = None,
     student_telegram_user_id: int | None = None,
+    summary: str | None = None,
+    relevant_history: list[dict] | None = None,
+    draft_reply: str | None = None,
 ) -> str:
     return tutor_notice(
         header=f"Сообщение от студента ({context_label})",
@@ -167,6 +176,9 @@ def manual_escalation_notice(
         student_telegram=student_telegram,
         student_time_zone=student_time_zone,
         student_telegram_user_id=student_telegram_user_id,
+        summary=summary,
+        relevant_history=relevant_history,
+        draft_reply=draft_reply,
     )
 
 
@@ -183,6 +195,9 @@ def tutor_notice(
     student_telegram: str | None = None,
     student_time_zone: str | None = None,
     student_telegram_user_id: int | None = None,
+    summary: str | None = None,
+    relevant_history: list[dict] | None = None,
+    draft_reply: str | None = None,
 ) -> str:
     lines = [
         f"<b>{escape(header)}</b>",
@@ -214,12 +229,30 @@ def tutor_notice(
             "",
             "<b>Сообщение студента:</b>",
             escape(question or "—"),
-            "",
-            "<i>Ответьте на это сообщение в Telegram.</i>",
         ]
     )
+    if summary:
+        lines.extend(["", "<b>Сводка:</b>", escape(summary)])
+    if relevant_history:
+        lines.extend(["", "<b>Недавний диалог:</b>"])
+        for item in relevant_history[-4:]:
+            role_label = _history_role_label(item.get("role"))
+            lines.append(
+                f"<b>{escape(role_label)}:</b> {escape(item.get('content') or '—')}"
+            )
+    if draft_reply:
+        lines.extend(["", "<b>Черновик ответа:</b>", escape(draft_reply)])
+    lines.extend(["", "<i>Ответьте на это сообщение в Telegram.</i>"])
     return "\n".join(lines)
 
 
 def tutor_answer_sent() -> str:
     return "Ответ отправлен студенту."
+
+
+def _history_role_label(role: str | None) -> str:
+    return {
+        "user": "Студент",
+        "assistant": "Бот",
+        "system": "Система",
+    }.get(role or "", role or "Сообщение")
