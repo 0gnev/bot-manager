@@ -411,6 +411,11 @@ Current tests cover:
 - tutor API behavior
 - OpenClaw client behavior
 
+Runtime resiliency now includes bounded retries:
+
+- outbound student-facing Telegram delivery retries before marking delivery failed
+- OpenClaw gateway calls retry on transport failures and retryable HTTP statuses
+
 Run locally or on the server with:
 
 ```bash

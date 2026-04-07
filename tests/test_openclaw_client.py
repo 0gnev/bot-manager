@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+import httpx
+
 from bridge.clients import openclaw
 
 
@@ -106,6 +108,17 @@ class _FakeAsyncClient:
         return self.__class__.response_cls()
 
 
+class _RetryingAsyncClient(_FakeAsyncClient):
+    outcomes: list[object] = []
+
+    async def post(self, *args, **kwargs):
+        self.__class__.requests.append(kwargs)
+        outcome = self.__class__.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
 def test_openclaw_plain_text_falls_back_to_answer(monkeypatch) -> None:
     _FakeAsyncClient.requests = []
     _FakeAsyncClient.response_cls = _FakeResponse
@@ -186,3 +199,37 @@ def test_openclaw_escalates_when_plain_text_requests_human_help(monkeypatch) -> 
 
     assert result["action"] == "escalate"
     assert result["confidence"] == 0.0
+
+
+def test_openclaw_retries_transport_error_before_success(monkeypatch) -> None:
+    _RetryingAsyncClient.requests = []
+    _RetryingAsyncClient.outcomes = [
+        httpx.ReadTimeout("slow upstream"),
+        _FakeJsonFenceResponse(),
+    ]
+    settings = SimpleNamespace(
+        openclaw_base_url="http://openclaw:18789",
+        gateway_auth_token="token",
+        openclaw_gateway_model="openclaw",
+        openclaw_request_attempts=3,
+        openclaw_request_backoff_seconds=0,
+    )
+    audit_events: list[tuple[str, str, dict]] = []
+
+    async def fake_audit_log(event_type: str, action: str, **kwargs) -> None:
+        audit_events.append((event_type, action, kwargs))
+
+    monkeypatch.setattr(openclaw.httpx, "AsyncClient", _RetryingAsyncClient)
+    monkeypatch.setattr(openclaw, "audit_log", fake_audit_log)
+
+    client = openclaw.OpenclawClient(settings)
+    result = asyncio.run(client.chat(message="Когда занятие?", booking_context={}, history=[], knowledge=[]))
+
+    assert result["action"] == "answer"
+    assert result["content"] == "Занятие в 12:00"
+    assert len(_RetryingAsyncClient.requests) == 2
+    assert sum(
+        1
+        for event_type, action, _ in audit_events
+        if event_type == "ai" and action == "call_made"
+    ) == 2

@@ -4,6 +4,7 @@ Unified outbound delivery service for student-facing messages.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from aiogram import Bot
@@ -31,11 +32,33 @@ async def send_student_message(
     model_output: dict | None = None,
 ) -> bool:
     """Send one student-facing message and record audit/history consistently."""
+    attempts = max(int(getattr(settings, "telegram_delivery_attempts", 1) or 1), 1)
+    backoff = max(float(getattr(settings, "telegram_delivery_backoff_seconds", 0.0) or 0.0), 0.0)
+
+    kwargs: dict = {}
+    if disable_web_page_preview is not None:
+        kwargs["disable_web_page_preview"] = disable_web_page_preview
+
     try:
-        kwargs: dict = {}
-        if disable_web_page_preview is not None:
-            kwargs["disable_web_page_preview"] = disable_web_page_preview
-        sent_message = await bot.send_message(chat_id, text, **kwargs)
+        sent_message = None
+        for attempt in range(1, attempts + 1):
+            try:
+                sent_message = await bot.send_message(chat_id, text, **kwargs)
+                break
+            except Exception as exc:
+                if attempt >= attempts:
+                    raise
+                logger.warning(
+                    "Retrying student delivery: booking=%s chat_id=%s source=%s attempt=%s/%s error=%s",
+                    booking_id,
+                    chat_id,
+                    source,
+                    attempt,
+                    attempts,
+                    exc,
+                )
+                if backoff > 0:
+                    await asyncio.sleep(backoff * (2 ** (attempt - 1)))
 
         if record_history:
             await conversations.append(
@@ -57,7 +80,7 @@ async def send_student_message(
             "student_message_sent",
             booking_id=booking_id,
             actor=actor,
-            detail={"source": source, "chat_id": chat_id},
+            detail={"source": source, "chat_id": chat_id, "attempts": attempt},
         )
         return True
     except Exception as exc:
