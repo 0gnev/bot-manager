@@ -1,0 +1,103 @@
+name: Live LLM Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to test
+        required: false
+        default: main
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  live-llm-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Validate required secrets
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
+        run: |
+          test -n "$OPENAI_API_KEY" || { echo "OPENAI_API_KEY is required"; exit 1; }
+          test -n "$GATEWAY_AUTH_TOKEN" || { echo "GATEWAY_AUTH_TOKEN is required"; exit 1; }
+
+      - name: Create workflow env file
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
+        run: |
+          cat > .env <<EOF
+          PROJECT_NAME=bot-manager
+          TZ=UTC
+          OPENAI_API_KEY=${OPENAI_API_KEY}
+          ANTHROPIC_API_KEY=
+          TELEGRAM_BOT_TOKEN_STUDENT=dummy-student-token
+          TELEGRAM_BOT_TOKEN_OWNER=dummy-owner-token
+          TELEGRAM_MODE=polling
+          TUTOR_CHAT_ID=1
+          PLANERKA_BASE_URL=http://example.invalid
+          PLANERKA_API_KEY=dummy
+          PLANERKA_WEBHOOK_SECRET=dummy
+          GATEWAY_AUTH_TOKEN=${GATEWAY_AUTH_TOKEN}
+          TUTOR_API_TOKEN=dummy
+          OPENCLAW_CONFIG_PATH=/workspace/config/openclaw.json
+          OBSIDIAN_SOURCE_PATH=/tmp/obsidian
+          KNOWLEDGE_MIRROR_PATH=/workspace/data/knowledge
+          DATABASE_URL=postgresql://bridge:bridge@postgres:5432/bridge
+          AUDIT_PATH=/workspace/data/audit
+          LOG_PATH=/workspace/data/logs
+          LOG_LEVEL=INFO
+          EOF
+
+      - name: Start OpenClaw
+        run: docker compose --env-file .env up -d openclaw
+
+      - name: Wait for OpenClaw health
+        run: |
+          cid="$(docker compose --env-file .env ps -q openclaw)"
+          test -n "$cid" || { echo "openclaw container not found"; exit 1; }
+          for _ in $(seq 1 60); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' "$cid")"
+            if [ "$status" = "healthy" ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose --env-file .env logs --tail=200 openclaw || true
+          exit 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements-dev.txt
+            app/bridge/requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Run live LLM smoke test
+        env:
+          PYTHONPATH: app
+          RUN_LIVE_LLM_TESTS: "1"
+          OPENCLAW_BASE_URL: http://127.0.0.1:18789
+          GATEWAY_AUTH_TOKEN: ${{ secrets.GATEWAY_AUTH_TOKEN }}
+        run: python -m pytest -q -m live_llm tests/live/test_openclaw_live.py
+
+      - name: Dump OpenClaw logs on failure
+        if: failure()
+        run: docker compose --env-file .env logs --tail=200 openclaw || true
+
+      - name: Stop OpenClaw
+        if: always()
+        run: docker compose --env-file .env down --remove-orphans
