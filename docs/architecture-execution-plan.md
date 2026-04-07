@@ -17,8 +17,8 @@ Source of truth: the compact architecture prompt provided for Bot Manager.
 
 - [ ] Implement PostgreSQL-backed runtime state with migration, tests, and production deployment plan.
   Reference: [postgresql-migration-task.md](/private/var/www/bot-manager/docs/postgresql-migration-task.md)
-- [ ] Add a dedicated `contacts` entity aligned with the architecture instead of keeping contact data only inside booking payloads.
-- [ ] Expand stored message records to include direction, attachments, model output, delivery status, and transport IDs.
+- [x] Add a dedicated `contacts` entity aligned with the architecture instead of keeping contact data only inside booking payloads.
+- [x] Expand stored message records to include direction, attachments, model output, delivery status, and transport IDs.
 - [ ] Enrich escalation packages with summary, relevant conversation history, and draft reply when available.
 - [ ] Add tutor-facing dialogue review/list endpoints so conversations can be reviewed without reading raw state files.
 - [ ] Tighten student-booking linking to a stronger deeplink or signed-token flow instead of username fallback.

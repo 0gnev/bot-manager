@@ -28,13 +28,14 @@ async def send_student_message(
     history_role: str = "assistant",
     record_history: bool = True,
     disable_web_page_preview: bool | None = None,
+    model_output: dict | None = None,
 ) -> bool:
     """Send one student-facing message and record audit/history consistently."""
     try:
         kwargs: dict = {}
         if disable_web_page_preview is not None:
             kwargs["disable_web_page_preview"] = disable_web_page_preview
-        await bot.send_message(chat_id, text, **kwargs)
+        sent_message = await bot.send_message(chat_id, text, **kwargs)
 
         if record_history:
             await conversations.append(
@@ -43,6 +44,12 @@ async def send_student_message(
                 text,
                 booking_id=booking_id,
                 contact_id=contact_id,
+                direction="outbound",
+                source=source,
+                delivery_status="sent",
+                transport_chat_id=chat_id,
+                transport_message_id=getattr(sent_message, "message_id", None),
+                model_output=model_output,
             )
 
         await audit_log(
@@ -54,6 +61,19 @@ async def send_student_message(
         )
         return True
     except Exception as exc:
+        if record_history:
+            await conversations.append(
+                settings.state_path,
+                history_role,
+                text,
+                booking_id=booking_id,
+                contact_id=contact_id,
+                direction="outbound",
+                source=source,
+                delivery_status="failed",
+                transport_chat_id=chat_id,
+                model_output=model_output,
+            )
         logger.error(
             "Failed to send student-facing message: booking=%s chat_id=%s source=%s error=%s",
             booking_id,

@@ -47,6 +47,8 @@ Current runtime behavior is contact-first:
 - `bookings` are optional context attached to messages, escalations, and approvals
 - students can talk to the bot without an existing booking
 - tutor controls are available both for booking-scoped chats and directly for contact-scoped chats
+- stored message records persist direction, delivery status, transport IDs,
+  attachment metadata, and raw model output when available
 
 Why this matters:
 

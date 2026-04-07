@@ -72,6 +72,7 @@ async def _handle_ai_response(
             contact_id=contact_id,
             settings=settings,
             source="ai_clarify",
+            model_output=response,
             actor="system",
         )
     else:
@@ -83,6 +84,7 @@ async def _handle_ai_response(
             contact_id=contact_id,
             settings=settings,
             source="ai_answer",
+            model_output=response,
             actor="system",
         )
 
@@ -348,6 +350,11 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
         text,
         booking_id=booking_id,
         contact_id=contact_id,
+        direction="inbound",
+        source="telegram_text",
+        delivery_status="received",
+        transport_chat_id=message.chat.id,
+        transport_message_id=getattr(message, "message_id", None),
     )
 
     chat = await conversations.load_chat_by_contact(
@@ -511,12 +518,33 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
 
     caption = message.caption or ""
     image_text = f"[image] {caption}" if caption else "[image]"
+    photo: PhotoSize = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    upload_dir = Path(settings.uploads_path) / (booking_id or f"contact-{contact_id}")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    local_path = str(upload_dir / f"{photo.file_id}.jpg")
+    await message.bot.download_file(file.file_path, destination=local_path)
+
     await conversations.append(
         settings.state_path,
         "user",
         image_text,
         booking_id=booking_id,
         contact_id=contact_id,
+        direction="inbound",
+        source="telegram_photo",
+        delivery_status="received",
+        transport_chat_id=message.chat.id,
+        transport_message_id=getattr(message, "message_id", None),
+        attachments=[
+            {
+                "file_id": photo.file_id,
+                "file_type": "photo",
+                "mime_type": "image/jpeg",
+                "local_path": local_path,
+                "caption": caption or None,
+            }
+        ],
     )
 
     chat = await conversations.load_chat_by_contact(
@@ -609,32 +637,6 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
         return
 
     await message.answer(templates.image_received())
-
-    # Download the largest photo variant
-    photo: PhotoSize = message.photo[-1]
-    file = await message.bot.get_file(photo.file_id)
-    upload_dir = Path(settings.uploads_path) / (booking_id or f"contact-{contact_id}")
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    local_path = str(upload_dir / f"{photo.file_id}.jpg")
-    await message.bot.download_file(file.file_path, destination=local_path)
-
-    # Record attachment metadata
-    try:
-        from bridge.db import get_pool
-        pool = get_pool()
-        await pool.execute(
-            """
-            INSERT INTO attachments (contact_id, booking_id, file_id, file_type, mime_type, local_path, caption)
-            VALUES ($1, $2, $3, 'photo', 'image/jpeg', $4, $5)
-            """,
-            contact_id,
-            booking_id,
-            photo.file_id,
-            local_path,
-            caption or None,
-        )
-    except Exception as exc:
-        logger.warning("Failed to record attachment metadata: %s", exc)
 
     history = await conversations.load(
         settings.state_path,

@@ -93,6 +93,60 @@ def test_contact_only_approval_state_persists_contact_scope(db_clean) -> None:
     run_async(_run())
 
 
+def test_conversation_messages_store_delivery_transport_and_attachments(db_clean) -> None:
+    async def _run():
+        contact = await contacts.ensure_telegram_contact(
+            "",
+            777,
+            telegram_username="media_student",
+            name="Media Student",
+        )
+
+        await conversations.append(
+            "",
+            "user",
+            "[image] Прислал фото",
+            contact_id=contact["id"],
+            direction="inbound",
+            source="telegram_photo",
+            delivery_status="received",
+            transport_chat_id=777,
+            transport_message_id=321,
+            attachments=[
+                {
+                    "file_id": "photo-file",
+                    "file_type": "photo",
+                    "mime_type": "image/jpeg",
+                    "local_path": "/tmp/photo.jpg",
+                    "caption": "Прислал фото",
+                }
+            ],
+        )
+        await conversations.append(
+            "",
+            "assistant",
+            "Ответ бота",
+            contact_id=contact["id"],
+            direction="outbound",
+            source="ai_answer",
+            delivery_status="sent",
+            transport_chat_id=777,
+            transport_message_id=322,
+            model_output={"action": "answer", "confidence": 0.93},
+        )
+
+        chat = await conversations.load_chat_by_contact("", contact["id"])
+
+        assert len(chat.messages) == 2
+        assert chat.messages[0]["attachments"][0]["file_id"] == "photo-file"
+        assert chat.messages[0]["transport_message_id"] == 321
+        assert chat.messages[1]["delivery_status"] == "sent"
+        assert chat.messages[1]["source"] == "ai_answer"
+        assert chat.messages[1]["model_output"]["confidence"] == 0.93
+
+    run_async(_run())
+
+
 # ── escalation tests ─────────────────────────────────────────────────────────
 
 
