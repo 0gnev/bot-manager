@@ -8,6 +8,7 @@ The system prompt instructs the model to return structured JSON:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -31,6 +32,11 @@ class OpenclawClient:
     def __init__(self, settings: Settings) -> None:
         self._base_url = settings.openclaw_base_url.rstrip("/")
         self._model = getattr(settings, "openclaw_gateway_model", "openclaw")
+        self._request_attempts = max(int(getattr(settings, "openclaw_request_attempts", 1) or 1), 1)
+        self._request_backoff_seconds = max(
+            float(getattr(settings, "openclaw_request_backoff_seconds", 0.0) or 0.0),
+            0.0,
+        )
         self._headers = {
             "Authorization": f"Bearer {settings.gateway_auth_token}",
             "Content-Type": "application/json",
@@ -145,57 +151,93 @@ class OpenclawClient:
             "reasoning": {"effort": "low"},
         }
         url = f"{self._base_url}/v1/responses"
-        await audit_log("ai", "call_made", actor="system", detail={"url": url})
-        try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(url, json=payload, headers=self._headers)
-                resp.raise_for_status()
-                raw = _extract_response_text(resp.json())
-                if raw is None:
-                    logger.warning("Openclaw returned no text payload, falling back to escalation")
+        attempts = max(int(getattr(self, "_request_attempts", 1)), 1)
+        for attempt in range(1, attempts + 1):
+            await audit_log("ai", "call_made", actor="system", detail={"url": url, "attempt": attempt})
+            try:
+                async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                    resp = await client.post(url, json=payload, headers=self._headers)
+                    resp.raise_for_status()
+                    raw = _extract_response_text(resp.json())
+                    if raw is None:
+                        logger.warning("Openclaw returned no text payload, falling back to escalation")
+                        await audit_log(
+                            "ai",
+                            "response_received",
+                            actor="system",
+                            outcome="failure",
+                            detail={"error": "missing_text_payload", "attempts": attempt},
+                        )
+                        return _fallback()
+                    result = _coerce_structured_response(raw)
+                    if result is None:
+                        logger.warning("Openclaw returned non-JSON, falling back to escalation")
+                        await audit_log(
+                            "ai",
+                            "response_received",
+                            actor="system",
+                            outcome="failure",
+                            detail={"error": "invalid_json", "attempts": attempt},
+                        )
+                        return _fallback()
+                    if not isinstance(result, dict):
+                        logger.warning("Openclaw returned non-object JSON, falling back to escalation")
+                        await audit_log(
+                            "ai",
+                            "response_received",
+                            actor="system",
+                            outcome="failure",
+                            detail={"error": "invalid_payload_type", "attempts": attempt},
+                        )
+                        return _fallback()
                     await audit_log(
-                        "ai",
-                        "response_received",
+                        "ai", "response_received",
                         actor="system",
-                        outcome="failure",
-                        detail={"error": "missing_text_payload"},
+                        detail={
+                            "action": result.get("action"),
+                            "confidence": result.get("confidence"),
+                            "attempts": attempt,
+                        },
                     )
-                    return _fallback()
-                result = _coerce_structured_response(raw)
-                if result is None:
-                    logger.warning("Openclaw returned non-JSON, falling back to escalation")
-                    await audit_log(
-                        "ai",
-                        "response_received",
-                        actor="system",
-                        outcome="failure",
-                        detail={"error": "invalid_json"},
-                    )
-                    return _fallback()
-                if not isinstance(result, dict):
-                    logger.warning("Openclaw returned non-object JSON, falling back to escalation")
-                    await audit_log(
-                        "ai",
-                        "response_received",
-                        actor="system",
-                        outcome="failure",
-                        detail={"error": "invalid_payload_type"},
-                    )
-                    return _fallback()
+                    return result
+            except httpx.HTTPStatusError as exc:
+                if attempt < attempts and _should_retry_status(exc.response.status_code):
+                    await _sleep_before_retry(self._request_backoff_seconds, attempt)
+                    continue
+                logger.error("Openclaw HTTP error: %s", exc.response.text)
                 await audit_log(
-                    "ai", "response_received",
+                    "ai",
+                    "response_received",
                     actor="system",
-                    detail={"action": result.get("action"), "confidence": result.get("confidence")},
+                    outcome="failure",
+                    detail={"error": "http_error", "attempts": attempt},
                 )
-                return result
-        except httpx.HTTPStatusError as exc:
-            logger.error("Openclaw HTTP error: %s", exc.response.text)
-            await audit_log("ai", "response_received", actor="system", outcome="failure", detail={"error": "http_error"})
-            return _fallback()
-        except Exception as exc:
-            logger.error("Openclaw unreachable: %s", exc)
-            await audit_log("ai", "response_received", actor="system", outcome="failure", detail={"error": str(exc)[:200]})
-            return _fallback()
+                return _fallback()
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                if attempt < attempts:
+                    logger.warning("Retrying Openclaw call after transport error: %s", exc)
+                    await _sleep_before_retry(self._request_backoff_seconds, attempt)
+                    continue
+                logger.error("Openclaw unreachable: %s", exc)
+                await audit_log(
+                    "ai",
+                    "response_received",
+                    actor="system",
+                    outcome="failure",
+                    detail={"error": str(exc)[:200], "attempts": attempt},
+                )
+                return _fallback()
+            except Exception as exc:
+                logger.error("Openclaw unreachable: %s", exc)
+                await audit_log(
+                    "ai",
+                    "response_received",
+                    actor="system",
+                    outcome="failure",
+                    detail={"error": str(exc)[:200], "attempts": attempt},
+                )
+                return _fallback()
+        return _fallback()
 
     async def _complete_text(self, messages: list[dict]) -> str:
         payload = {
@@ -204,40 +246,89 @@ class OpenclawClient:
             "reasoning": {"effort": "low"},
         }
         url = f"{self._base_url}/v1/responses"
-        await audit_log("ai", "call_made", actor="system", detail={"url": url, "mode": "tutor_assistant"})
-        try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(url, json=payload, headers=self._headers)
-                resp.raise_for_status()
-                raw = _extract_response_text(resp.json())
-                if raw is None:
-                    logger.warning("Openclaw returned no text payload for tutor assistant")
+        attempts = max(int(getattr(self, "_request_attempts", 1)), 1)
+        for attempt in range(1, attempts + 1):
+            await audit_log(
+                "ai",
+                "call_made",
+                actor="system",
+                detail={"url": url, "mode": "tutor_assistant", "attempt": attempt},
+            )
+            try:
+                async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                    resp = await client.post(url, json=payload, headers=self._headers)
+                    resp.raise_for_status()
+                    raw = _extract_response_text(resp.json())
+                    if raw is None:
+                        logger.warning("Openclaw returned no text payload for tutor assistant")
+                        await audit_log(
+                            "ai",
+                            "response_received",
+                            actor="system",
+                            outcome="failure",
+                            detail={
+                                "mode": "tutor_assistant",
+                                "error": "missing_text_payload",
+                                "attempts": attempt,
+                            },
+                        )
+                        return "Не удалось сейчас ответить по базе знаний. Попробуйте переформулировать запрос."
+                    text = raw.strip() if isinstance(raw, str) else str(raw)
                     await audit_log(
                         "ai",
                         "response_received",
                         actor="system",
-                        outcome="failure",
-                        detail={"mode": "tutor_assistant", "error": "missing_text_payload"},
+                        detail={"mode": "tutor_assistant", "attempts": attempt},
                     )
-                    return "Не удалось сейчас ответить по базе знаний. Попробуйте переформулировать запрос."
-                text = raw.strip() if isinstance(raw, str) else str(raw)
+                    return text or "Не удалось подготовить ответ."
+            except httpx.HTTPStatusError as exc:
+                if attempt < attempts and _should_retry_status(exc.response.status_code):
+                    await _sleep_before_retry(self._request_backoff_seconds, attempt)
+                    continue
+                logger.error("Openclaw tutor assistant HTTP error: %s", exc.response.text)
                 await audit_log(
                     "ai",
                     "response_received",
                     actor="system",
-                    detail={"mode": "tutor_assistant"},
+                    outcome="failure",
+                    detail={"mode": "tutor_assistant", "error": "http_error", "attempts": attempt},
                 )
-                return text or "Не удалось подготовить ответ."
-        except Exception as exc:
-            logger.error("Openclaw tutor assistant failed: %s", exc)
-            await audit_log(
-                "ai",
-                "response_received",
-                actor="system",
-                outcome="failure",
-                detail={"mode": "tutor_assistant", "error": str(exc)[:200]},
-            )
-            return "Не удалось сейчас ответить по базе знаний. Попробуйте переформулировать запрос."
+                return "Не удалось сейчас ответить по базе знаний. Попробуйте переформулировать запрос."
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                if attempt < attempts:
+                    logger.warning("Retrying Openclaw tutor assistant after transport error: %s", exc)
+                    await _sleep_before_retry(self._request_backoff_seconds, attempt)
+                    continue
+                logger.error("Openclaw tutor assistant failed: %s", exc)
+                await audit_log(
+                    "ai",
+                    "response_received",
+                    actor="system",
+                    outcome="failure",
+                    detail={"mode": "tutor_assistant", "error": str(exc)[:200], "attempts": attempt},
+                )
+                return "Не удалось сейчас ответить по базе знаний. Попробуйте переформулировать запрос."
+            except Exception as exc:
+                logger.error("Openclaw tutor assistant failed: %s", exc)
+                await audit_log(
+                    "ai",
+                    "response_received",
+                    actor="system",
+                    outcome="failure",
+                    detail={"mode": "tutor_assistant", "error": str(exc)[:200], "attempts": attempt},
+                )
+                return "Не удалось сейчас ответить по базе знаний. Попробуйте переформулировать запрос."
+        return "Не удалось сейчас ответить по базе знаний. Попробуйте переформулировать запрос."
+
+
+async def _sleep_before_retry(base_delay: float, attempt: int) -> None:
+    if base_delay <= 0:
+        return
+    await asyncio.sleep(base_delay * (2 ** (attempt - 1)))
+
+
+def _should_retry_status(status_code: int) -> bool:
+    return status_code in {408, 409, 425, 429, 500, 502, 503, 504}
 
 
 def _messages_to_responses_input(messages: list[dict]) -> list[dict[str, Any]]:

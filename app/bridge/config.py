@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     gateway_auth_token: str      # OpenClaw gateway HTTP API
     openclaw_base_url: str = "http://openclaw:18789"
     openclaw_gateway_model: str = "openclaw"
+    openclaw_request_attempts: int = 3
+    openclaw_request_backoff_seconds: float = 0.5
 
     # ── Tutor API ─────────────────────────────────────────────────────────────
     tutor_api_token: str = ""    # Separate auth for /api/tutor/* endpoints
@@ -47,6 +49,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_max_bytes: int = 10 * 1024 * 1024
     log_backup_count: int = 5
+    telegram_delivery_attempts: int = 3
+    telegram_delivery_backoff_seconds: float = 0.5
 
     # ── Server ────────────────────────────────────────────────────────────────
     host: str = "0.0.0.0"
