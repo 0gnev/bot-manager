@@ -33,6 +33,61 @@ async def load_by_telegram_user(state_path: str, telegram_user_id: int) -> dict 
     return _row_to_dict(row)
 
 
+async def load_by_telegram_username(state_path: str, telegram_username: str) -> dict | None:
+    normalized = (telegram_username or "").lstrip("@")
+    row = await get_pool().fetchrow(
+        """
+        SELECT * FROM contacts
+        WHERE lower(telegram_username) = lower($1)
+        LIMIT 1
+        """,
+        normalized,
+    )
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
+async def search_dialog_targets(
+    state_path: str,
+    query: str,
+    *,
+    limit: int = 5,
+) -> list[dict]:
+    normalized = (query or "").strip()
+    if not normalized:
+        return []
+
+    like_value = f"%{normalized.lower()}%"
+    rows = await get_pool().fetch(
+        """
+        SELECT *,
+               CASE
+                   WHEN lower(COALESCE(telegram_username, '')) = lower($1) THEN 400
+                   WHEN lower(COALESCE(email, '')) = lower($1) THEN 350
+                   WHEN lower(COALESCE(name, '')) = lower($1) THEN 300
+                   WHEN lower(COALESCE(telegram_username, '')) LIKE $2 THEN 220
+                   WHEN lower(COALESCE(email, '')) LIKE $2 THEN 200
+                   WHEN lower(COALESCE(name, '')) LIKE $2 THEN 180
+                   ELSE 0
+               END AS match_rank
+        FROM contacts
+        WHERE lower(COALESCE(telegram_username, '')) = lower($1)
+           OR lower(COALESCE(email, '')) = lower($1)
+           OR lower(COALESCE(name, '')) = lower($1)
+           OR lower(COALESCE(telegram_username, '')) LIKE $2
+           OR lower(COALESCE(email, '')) LIKE $2
+           OR lower(COALESCE(name, '')) LIKE $2
+        ORDER BY match_rank DESC, updated_at DESC, id DESC
+        LIMIT $3
+        """,
+        normalized,
+        like_value,
+        limit,
+    )
+    return [_row_to_dict(row) for row in rows]
+
+
 async def ensure_telegram_contact(
     state_path: str,
     telegram_user_id: int,

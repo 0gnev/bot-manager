@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -38,6 +40,32 @@ router = Router(name="tutor")
 _BOOKING_ID_RE = re.compile(r"ID брони:\s*(?:<code>)?([A-Za-z0-9_-]+)")
 _CONTACT_ID_RE = re.compile(r"ID контакта:\s*(?:<code>)?(\d+)")
 _APPROVAL_SEND_RE = re.compile(r"^/send(?:\s+|\n+)(.+)$", re.DOTALL)
+_DIALOG_EXPORT_INTENT_RE = re.compile(
+    r"(?:\b(?:весь|полный)\s+(?:диалог|чат|лог|текст\s+диалога)\b"
+    r"|\bвсю\s+переписк[ау]\b"
+    r"|\bистори(?:я|ю)\s+(?:диалога|переписки)\b)",
+    re.IGNORECASE,
+)
+_DIALOG_EXPORT_TARGET_RE = re.compile(
+    r"(?:\b(?:весь|полный)\s+(?:диалог|чат|лог|текст\s+диалога)\b"
+    r"|\bвсю\s+переписк[ау]\b"
+    r"|\bистори(?:я|ю)\s+(?:диалога|переписки)\b)"
+    r"(?:\s+с)?\s+(?P<target>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+_EXPORT_TRAILING_RE = re.compile(
+    r"(?:\s+(?:сюда|в\s+чат|в\s+телеграм|телеграмом|текстом|в\s+виде\s+текста|"
+    r"в\s+тексте|файлом|пожалуйста|плиз))+$",
+    re.IGNORECASE,
+)
+_DIRECT_TUTOR_SOURCES = {
+    "tutor_telegram_reply",
+    "tutor_api_reply",
+    "approval_edit_approve",
+}
+_REVIEWED_TUTOR_SOURCES = {
+    "approval_approved",
+}
 
 
 # -- /mode command -------------------------------------------------------------
@@ -334,6 +362,9 @@ async def on_tutor_message(message: Message, role: str, settings: Settings) -> N
     if (message.text or "").startswith("/"):
         return
 
+    if await _maybe_export_dialogue(message, settings):
+        return
+
     knowledge = await knowledge_search(settings.knowledge_path, message.text, limit=5)
     client = OpenclawClient(settings)
     reply = await client.tutor_assistant(message.text, knowledge=knowledge)
@@ -412,3 +443,260 @@ async def _store_tutor_photo_reply(
         "local_path": local_path,
         "caption": message.caption or None,
     }
+
+
+async def _maybe_export_dialogue(message: Message, settings: Settings) -> bool:
+    text = (message.text or "").strip()
+    if not _DIALOG_EXPORT_INTENT_RE.search(text):
+        return False
+
+    booking_id = _extract_booking_id_from_text(text)
+    if booking_id:
+        booking = await bookings.load(settings.state_path, booking_id)
+        if not booking:
+            await message.answer(f"Не удалось найти бронь {booking_id}.")
+            return True
+        chat = await conversations.load_chat(settings.state_path, booking_id)
+        contact = None
+        contact_id = booking.get("contact_id")
+        if contact_id is not None:
+            contact = await contacts.load(settings.state_path, contact_id)
+        transcript = _render_transcript(
+            messages=chat.messages,
+            contact=contact,
+            booking=booking,
+            title=f"Полный диалог по брони {booking_id}",
+        )
+        await _send_export_chunks(message, transcript)
+        await audit_log(
+            "tutor",
+            "dialogue_exported",
+            booking_id=booking_id,
+            actor="tutor",
+            detail={
+                "contact_id": contact_id,
+                "message_count": len(chat.messages),
+                "scope": "booking",
+            },
+        )
+        return True
+
+    target = _extract_dialog_export_target(text)
+    if not target:
+        await message.answer(
+            "Укажите, чей диалог выгрузить: username, e-mail, имя контакта или booking_id."
+        )
+        return True
+
+    exact_contact = await contacts.load_by_telegram_username(settings.state_path, target)
+    matches = [exact_contact] if exact_contact else await contacts.search_dialog_targets(
+        settings.state_path,
+        target,
+        limit=5,
+    )
+    if not matches:
+        await message.answer(f"Не удалось найти диалог для {target}.")
+        return True
+
+    contact = _select_dialog_target(matches, target)
+    if contact is None:
+        variants = "\n".join(_format_target_option(item) for item in matches[:5])
+        await message.answer(
+            "Найдено несколько подходящих диалогов. Уточните booking_id, username или e-mail:\n"
+            f"{variants}"
+        )
+        return True
+
+    contact_id = contact["id"]
+    active_booking = await bookings.resolve_context_for_contact(settings.state_path, contact_id)
+    chat = await conversations.load_chat_by_contact(
+        settings.state_path,
+        contact_id,
+        booking_id=active_booking["booking_id"] if active_booking else None,
+    )
+    transcript = _render_transcript(
+        messages=chat.messages,
+        contact=contact,
+        booking=active_booking,
+        title=f"Полный диалог с {contact.get('telegram_username') or contact.get('name') or contact_id}",
+    )
+    await _send_export_chunks(message, transcript)
+    await audit_log(
+        "tutor",
+        "dialogue_exported",
+        actor="tutor",
+        detail={
+            "contact_id": contact_id,
+            "booking_id": active_booking["booking_id"] if active_booking else None,
+            "message_count": len(chat.messages),
+            "scope": "contact",
+            "query": target,
+        },
+    )
+    return True
+
+
+def _extract_booking_id_from_text(text: str) -> str | None:
+    labelled = re.search(
+        r"(?:\bbooking_id\b|\bID\s+брони\b|\bбронь\b)\s*[:#]?\s*([A-Za-z0-9_-]{8,})",
+        text,
+        re.IGNORECASE,
+    )
+    if labelled:
+        return labelled.group(1)
+    stripped = text.strip()
+    if re.fullmatch(r"[A-Za-z0-9_-]{12,}", stripped):
+        return stripped
+    return None
+
+
+def _extract_dialog_export_target(text: str) -> str | None:
+    match = _DIALOG_EXPORT_TARGET_RE.search(text)
+    if not match:
+        return None
+
+    target = " ".join(match.group("target").split())
+    target = _EXPORT_TRAILING_RE.sub("", target).strip(" \n\r\t.,:;!?\"'«»()[]")
+    return target or None
+
+
+def _select_dialog_target(matches: list[dict], raw_target: str) -> dict | None:
+    if not matches:
+        return None
+    if len(matches) == 1:
+        return matches[0]
+
+    normalized = raw_target.strip().lstrip("@").lower()
+    exact = []
+    for item in matches:
+        if (item.get("telegram_username") or "").lower() == normalized:
+            exact.append(item)
+        elif (item.get("email") or "").lower() == normalized:
+            exact.append(item)
+        elif (item.get("name") or "").lower() == normalized:
+            exact.append(item)
+    if len(exact) == 1:
+        return exact[0]
+    return None
+
+
+def _format_target_option(contact: dict) -> str:
+    name = contact.get("name") or "без имени"
+    username = contact.get("telegram_username")
+    email = contact.get("email")
+    parts = [name]
+    if username:
+        parts.append(f"telegram: {username}")
+    if email:
+        parts.append(f"email: {email}")
+    return "• " + " | ".join(parts)
+
+
+def _render_transcript(
+    *,
+    messages: list[dict],
+    contact: dict | None,
+    booking: dict | None,
+    title: str,
+) -> str:
+    lines = [title]
+
+    if contact:
+        name = contact.get("name")
+        username = contact.get("telegram_username")
+        email = contact.get("email")
+        if name:
+            lines.append(f"Контакт: {name}")
+        if username:
+            lines.append(f"Telegram: {username}")
+        if email:
+            lines.append(f"Email: {email}")
+
+    if booking:
+        lines.append(f"ID брони: {booking.get('booking_id')}")
+        if booking.get("title"):
+            lines.append(f"Занятие: {booking['title']}")
+
+    lines.append("")
+    lines.append("История:")
+
+    if not messages:
+        lines.append("Диалог пуст.")
+        return "\n".join(lines)
+
+    time_zone = None
+    if contact and contact.get("time_zone"):
+        try:
+            time_zone = ZoneInfo(contact["time_zone"])
+        except Exception:
+            time_zone = None
+
+    for entry in messages:
+        timestamp = _format_message_timestamp(entry.get("ts"), time_zone)
+        speaker = _speaker_label(entry)
+        content = (entry.get("content") or "").strip() or "[пустое сообщение]"
+        lines.append(f"[{timestamp}] {speaker}: {content}")
+
+    return "\n".join(lines)
+
+
+def _format_message_timestamp(value: str | None, time_zone: ZoneInfo | None) -> str:
+    if not value:
+        return "без времени"
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    if time_zone is not None:
+        dt = dt.astimezone(time_zone)
+    return dt.strftime("%d.%m.%Y %H:%M")
+
+
+def _speaker_label(entry: dict) -> str:
+    role = entry.get("role")
+    source = entry.get("source") or ""
+    if role == "user":
+        return "Студент"
+    if source in _DIRECT_TUTOR_SOURCES:
+        return "Преподаватель"
+    if source in _REVIEWED_TUTOR_SOURCES:
+        return "Бот (одобрено преподавателем)"
+    if role == "assistant":
+        return "Бот"
+    return "Система"
+
+
+async def _send_export_chunks(message: Message, text: str, *, limit: int = 3500) -> None:
+    chunks = _chunk_text(text, limit=limit)
+    for chunk in chunks:
+        await message.answer(chunk)
+
+
+def _chunk_text(text: str, *, limit: int) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in text.splitlines():
+        if len(line) > limit:
+            if current:
+                chunks.append("\n".join(current))
+                current = []
+                current_len = 0
+            for start in range(0, len(line), limit):
+                chunks.append(line[start:start + limit])
+            continue
+        line_len = len(line) + 1
+        if current and current_len + line_len > limit:
+            chunks.append("\n".join(current))
+            current = [line]
+            current_len = line_len
+            continue
+        current.append(line)
+        current_len += line_len
+
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
