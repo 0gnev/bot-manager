@@ -76,6 +76,10 @@ into a writable runtime path under `data/openclaw/` before starting the
 container. This avoids OpenClaw startup failures when it tries to persist
 plugin auto-enable state back into `OPENCLAW_CONFIG_PATH`.
 
+The workflow waits for OpenClaw via HTTP `GET /health`, not Docker
+`Health.Status`, because the HTTP probe proved to be the more reliable readiness
+signal for the gateway in Actions.
+
 ## Recommended GitHub environment setup
 
 Create a `production` environment in GitHub and attach the deploy secrets to it.
