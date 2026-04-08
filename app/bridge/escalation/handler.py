@@ -19,7 +19,8 @@ from aiogram.types import Message
 from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.config import Settings
-from bridge.state import conversations, escalations
+from bridge.state import conversations, escalations, load_controls
+from bridge.timezones import parse_datetime
 from telegram_adapter import templates
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,13 @@ async def escalate(
         reason=reason,
         ai_response=ai_response,
     )
+    tutor_time_zone = None
+    try:
+        controls = await load_controls(settings.state_path)
+    except Exception:
+        logger.warning("Could not load tutor time zone for escalation notice", exc_info=True)
+    else:
+        tutor_time_zone = controls.get("tutor_time_zone")
 
     notice = templates.escalation_notice(
         student_name=attendee.get("name") or contact.get("name") or "Студент",
@@ -75,6 +83,7 @@ async def escalate(
         question=question,
         event_title=(booking or {}).get("title"),
         start_time=_parse_dt((booking or {}).get("start_time")),
+        viewer_time_zone=tutor_time_zone,
         student_email=attendee.get("email") or contact.get("email"),
         student_phone=attendee.get("phone") or contact.get("phone"),
         student_telegram=attendee.get("telegram") or contact.get("telegram_username"),
@@ -136,12 +145,7 @@ async def escalate(
 
 
 def _parse_dt(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except Exception:
-        return None
+    return parse_datetime(value)
 
 
 def _tutor_image_caption(*, booking_id: str | None, contact_id: int) -> str:
@@ -168,6 +172,13 @@ async def prepare_escalation_package(
         contact_id,
         booking_id=booking_id,
     )
+    tutor_time_zone = None
+    try:
+        controls = await load_controls(settings.state_path)
+    except Exception:
+        logger.warning("Could not load tutor time zone for escalation summary", exc_info=True)
+    else:
+        tutor_time_zone = controls.get("tutor_time_zone")
     history = await conversations.load(
         settings.state_path,
         booking_id,
@@ -179,6 +190,7 @@ async def prepare_escalation_package(
             contact=contact,
             reason=reason,
             chat=chat,
+            viewer_time_zone=tutor_time_zone,
         ),
         "relevant_history": _select_relevant_history(history, question),
         "draft_reply": _extract_draft_reply(ai_response),
@@ -191,13 +203,14 @@ def _build_summary(
     contact: dict,
     reason: str | None,
     chat,
+    viewer_time_zone: str | None = None,
 ) -> str:
     parts: list[str] = []
     if booking:
         parts.append(
             "Контекст: "
             f"{booking.get('title') or 'Занятие'} "
-            f"({templates.fmt_dt(_parse_dt(booking.get('start_time')))})"
+            f"({templates.fmt_dt(_parse_dt(booking.get('start_time')), time_zone_name=viewer_time_zone, include_time_zone=bool(viewer_time_zone))})"
         )
     else:
         parts.append(

@@ -15,6 +15,7 @@ from bridge.bot import registry
 from bridge.config import Settings
 from bridge.delivery import send_student_message
 from bridge.state import bookings, conversations
+from bridge.timezones import parse_datetime
 from telegram_adapter import templates
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,7 @@ async def _on_rescheduled(
         start_time=_parse_dt(existing.get("start_time")),
         end_time=_parse_dt(existing.get("end_time")),
         meeting_url=existing.get("meeting_url"),
+        time_zone_name=_student_time_zone(existing),
     ))
 
 
@@ -179,9 +181,9 @@ async def _notify_student(settings: Settings, booking: dict, text: str) -> None:
 
 
 def _parse_dt(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except Exception:
-        return None
+    return parse_datetime(value)
+
+
+def _student_time_zone(booking: dict) -> str | None:
+    attendee = booking.get("attendee") or {}
+    return attendee.get("timeZone")

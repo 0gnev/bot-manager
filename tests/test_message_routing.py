@@ -275,9 +275,13 @@ def test_tutor_message_exports_contact_dialogue_without_llm(monkeypatch) -> None
     async def fake_audit_log(*args, **kwargs):
         return None
 
+    async def fake_load_controls(*args, **kwargs):
+        return {"tutor_time_zone": "Europe/Moscow"}
+
     monkeypatch.setattr(tutor.contacts, "load_by_telegram_username", fake_load_by_telegram_username)
     monkeypatch.setattr(tutor.bookings, "resolve_context_for_contact", fake_resolve_context_for_contact)
     monkeypatch.setattr(tutor.conversations, "load_chat_by_contact", fake_load_chat_by_contact)
+    monkeypatch.setattr(tutor, "load_controls", fake_load_controls)
     monkeypatch.setattr(tutor, "knowledge_search", should_not_be_called)
     monkeypatch.setattr(tutor, "audit_log", fake_audit_log)
 
@@ -286,8 +290,9 @@ def test_tutor_message_exports_contact_dialogue_without_llm(monkeypatch) -> None
     assert len(message.answers) == 1
     assert "Полный диалог с ilandroxxy" in message.answers[0]
     assert "Telegram: ilandroxxy" in message.answers[0]
-    assert "[07.04.2026 22:00] Студент: Привет" in message.answers[0]
-    assert "[07.04.2026 22:01] Бот: Здравствуйте" in message.answers[0]
+    assert "Время сообщений: Europe/Moscow" in message.answers[0]
+    assert "[07.04.2026 19:00] Студент: Привет" in message.answers[0]
+    assert "[07.04.2026 19:01] Бот: Здравствуйте" in message.answers[0]
 
 
 def test_tutor_dialog_command_exports_contact_dialogue(monkeypatch) -> None:
@@ -324,16 +329,40 @@ def test_tutor_dialog_command_exports_contact_dialogue(monkeypatch) -> None:
     async def fake_audit_log(*args, **kwargs):
         return None
 
+    async def fake_load_controls(*args, **kwargs):
+        return {"tutor_time_zone": "Europe/Moscow"}
+
     monkeypatch.setattr(tutor.contacts, "load_by_telegram_username", fake_load_by_telegram_username)
     monkeypatch.setattr(tutor.bookings, "resolve_context_for_contact", fake_resolve_context_for_contact)
     monkeypatch.setattr(tutor.conversations, "load_chat_by_contact", fake_load_chat_by_contact)
+    monkeypatch.setattr(tutor, "load_controls", fake_load_controls)
     monkeypatch.setattr(tutor, "audit_log", fake_audit_log)
 
     asyncio.run(tutor.on_dialog_export(message, "tutor", settings))
 
     assert len(message.answers) == 1
     assert "Полный диалог с ilandroxxy" in message.answers[0]
-    assert "[07.04.2026 22:01] Бот: Здравствуйте" in message.answers[0]
+    assert "[07.04.2026 19:01] Бот: Здравствуйте" in message.answers[0]
+
+
+def test_tutor_timezone_command_saves_timezone(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    message = DummyMessage("/timezone Europe/Moscow")
+
+    async def fake_save_tutor_time_zone(*args, **kwargs):
+        return {"tutor_time_zone": "Europe/Moscow"}
+
+    async def fake_audit_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(tutor, "save_tutor_time_zone", fake_save_tutor_time_zone)
+    monkeypatch.setattr(tutor, "audit_log", fake_audit_log)
+
+    asyncio.run(tutor.on_timezone(message, "tutor", settings))
+
+    assert len(message.answers) == 1
+    assert "Europe/Moscow" in message.answers[0]
+    assert "сохранён" in message.answers[0]
 
 
 def test_tutor_message_export_requests_disambiguation(monkeypatch) -> None:
@@ -834,11 +863,15 @@ def test_escalation_keeps_contact_automation_enabled(monkeypatch) -> None:
             {"role": "user", "content": "Нужен преподаватель", "ts": "2026-04-07T08:02:00+00:00"},
         ]
 
+    async def fake_load_controls(*args, **kwargs):
+        return {"tutor_time_zone": "Europe/Moscow"}
+
     monkeypatch.setattr(escalation_handler.registry, "get_owner", lambda: FakeOwnerBot())
     monkeypatch.setattr(escalation_handler.escalations, "create", fake_create)
     monkeypatch.setattr(escalation_handler.conversations, "update_metadata", fake_update_metadata)
     monkeypatch.setattr(escalation_handler.conversations, "load_chat_by_contact", fake_load_chat_by_contact)
     monkeypatch.setattr(escalation_handler.conversations, "load", fake_load_history)
+    monkeypatch.setattr(escalation_handler, "load_controls", fake_load_controls)
     monkeypatch.setattr(escalation_handler, "audit_log", fake_audit_log)
 
     asyncio.run(

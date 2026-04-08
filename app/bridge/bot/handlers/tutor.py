@@ -15,9 +15,8 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -30,7 +29,17 @@ from bridge.bot.filters import TutorBotFilter
 from bridge.clients.openclaw import OpenclawClient
 from bridge.config import Settings
 from bridge.delivery import send_student_message
-from bridge.state import approvals, bookings, contacts, conversations, escalations, OperatingMode
+from bridge.state import (
+    approvals,
+    bookings,
+    contacts,
+    conversations,
+    escalations,
+    load_controls,
+    OperatingMode,
+    save_tutor_time_zone,
+)
+from bridge.timezones import format_datetime, parse_datetime, validate_time_zone_name
 from obsidian_adapter.reader import search as knowledge_search
 from telegram_adapter import templates
 
@@ -137,6 +146,68 @@ async def on_dialog_export(message: Message, role: str, settings: Settings) -> N
         settings,
         request_text=parts[1].strip(),
         force=True,
+    )
+
+
+@router.message(TutorBotFilter(), Command("timezone"))
+async def on_timezone(message: Message, role: str, settings: Settings) -> None:
+    if role != "tutor":
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        controls = await load_controls(settings.state_path)
+        current = controls.get("tutor_time_zone")
+        if current:
+            local_now = format_datetime(
+                datetime.now(timezone.utc),
+                time_zone_name=current,
+                fmt="%d.%m.%Y %H:%M",
+            )
+            await message.answer(
+                "Текущий часовой пояс преподавателя: "
+                f"<b>{current}</b>\n"
+                f"Локальное время: <b>{local_now}</b>\n"
+                "Чтобы изменить его, отправьте "
+                "<code>/timezone Europe/Moscow</code>."
+            )
+            return
+
+        await message.answer(
+            "Часовой пояс преподавателя пока не задан.\n"
+            "Установите его командой <code>/timezone Europe/Moscow</code>."
+        )
+        return
+
+    requested = validate_time_zone_name(parts[1])
+    if not requested:
+        await message.answer(
+            "Не удалось распознать часовой пояс.\n"
+            "Пример: <code>/timezone Europe/Moscow</code>."
+        )
+        return
+
+    await save_tutor_time_zone(
+        settings.state_path,
+        tutor_time_zone=requested,
+        updated_by="tutor",
+        reason="timezone_updated_via_telegram",
+    )
+    local_now = format_datetime(
+        datetime.now(timezone.utc),
+        time_zone_name=requested,
+        fmt="%d.%m.%Y %H:%M",
+    )
+    await message.answer(
+        "Часовой пояс преподавателя сохранён: "
+        f"<b>{requested}</b>\n"
+        f"Локальное время: <b>{local_now}</b>"
+    )
+    await audit_log(
+        "tutor",
+        "timezone_updated",
+        actor="tutor",
+        detail={"time_zone": requested, "via": "telegram"},
     )
 
 
@@ -489,6 +560,13 @@ async def _maybe_export_dialogue(
     text = (request_text or message.text or "").strip()
     if not force and not _looks_like_dialog_export_request(text):
         return False
+    tutor_time_zone = None
+    try:
+        controls = await load_controls(settings.state_path)
+    except Exception:
+        logger.warning("Could not load tutor time zone for transcript export", exc_info=True)
+    else:
+        tutor_time_zone = controls.get("tutor_time_zone")
 
     booking_id = _extract_booking_id_from_text(text)
     if booking_id:
@@ -506,6 +584,7 @@ async def _maybe_export_dialogue(
             contact=contact,
             booking=booking,
             title=f"Полный диалог по брони {booking_id}",
+            viewer_time_zone=tutor_time_zone,
         )
         await _send_export_chunks(message, transcript)
         await audit_log(
@@ -560,6 +639,7 @@ async def _maybe_export_dialogue(
         contact=contact,
         booking=active_booking,
         title=f"Полный диалог с {contact.get('telegram_username') or contact.get('name') or contact_id}",
+        viewer_time_zone=tutor_time_zone,
     )
     await _send_export_chunks(message, transcript)
     await audit_log(
@@ -647,6 +727,7 @@ def _render_transcript(
     contact: dict | None,
     booking: dict | None,
     title: str,
+    viewer_time_zone: str | None = None,
 ) -> str:
     lines = [title]
 
@@ -665,6 +746,18 @@ def _render_transcript(
         lines.append(f"ID брони: {booking.get('booking_id')}")
         if booking.get("title"):
             lines.append(f"Занятие: {booking['title']}")
+        if booking.get("start_time"):
+            lines.append(
+                "Время занятия: "
+                + format_datetime(
+                    booking.get("start_time"),
+                    time_zone_name=viewer_time_zone,
+                    fmt="%d.%m.%Y %H:%M",
+                )
+            )
+
+    if viewer_time_zone:
+        lines.append(f"Время сообщений: {viewer_time_zone}")
 
     lines.append("")
     lines.append("История:")
@@ -673,15 +766,8 @@ def _render_transcript(
         lines.append("Диалог пуст.")
         return "\n".join(lines)
 
-    time_zone = None
-    if contact and contact.get("time_zone"):
-        try:
-            time_zone = ZoneInfo(contact["time_zone"])
-        except Exception:
-            time_zone = None
-
     for entry in messages:
-        timestamp = _format_message_timestamp(entry.get("ts"), time_zone)
+        timestamp = _format_message_timestamp(entry.get("ts"), viewer_time_zone)
         speaker = _speaker_label(entry)
         content = (entry.get("content") or "").strip() or "[пустое сообщение]"
         lines.append(f"[{timestamp}] {speaker}: {content}")
@@ -689,16 +775,18 @@ def _render_transcript(
     return "\n".join(lines)
 
 
-def _format_message_timestamp(value: str | None, time_zone: ZoneInfo | None) -> str:
+def _format_message_timestamp(value: str | None, time_zone_name: str | None) -> str:
     if not value:
         return "без времени"
-    try:
-        dt = datetime.fromisoformat(value)
-    except ValueError:
+    dt = parse_datetime(value)
+    if dt is None:
         return value
-    if time_zone is not None:
-        dt = dt.astimezone(time_zone)
-    return dt.strftime("%d.%m.%Y %H:%M")
+    return format_datetime(
+        dt,
+        time_zone_name=time_zone_name,
+        fmt="%d.%m.%Y %H:%M",
+        fallback=value,
+    )
 
 
 def _speaker_label(entry: dict) -> str:

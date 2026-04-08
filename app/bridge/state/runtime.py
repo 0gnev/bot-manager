@@ -18,6 +18,7 @@ def _default_controls() -> dict:
     now = datetime.now(timezone.utc).isoformat()
     return {
         "global_automation_enabled": True,
+        "tutor_time_zone": None,
         "updated_at": now,
         "updated_by": "system",
         "reason": None,
@@ -31,6 +32,7 @@ async def load_controls(state_path: str = "") -> dict:
         return _default_controls()
     return {
         "global_automation_enabled": row["global_automation_enabled"],
+        "tutor_time_zone": row["tutor_time_zone"],
         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
         "updated_by": row["updated_by"],
         "reason": row["reason"],
@@ -64,6 +66,41 @@ async def save_controls(
         return _default_controls()
     return {
         "global_automation_enabled": row["global_automation_enabled"],
+        "tutor_time_zone": row["tutor_time_zone"],
+        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        "updated_by": row["updated_by"],
+        "reason": row["reason"],
+    }
+
+
+async def save_tutor_time_zone(
+    state_path: str = "",
+    *,
+    tutor_time_zone: str | None,
+    updated_by: str,
+    reason: str | None = None,
+) -> dict:
+    pool = get_pool()
+    normalized = (tutor_time_zone or "").strip() or None
+    row = await pool.fetchrow(
+        """
+        UPDATE runtime_controls
+        SET tutor_time_zone = $1,
+            updated_at = now(),
+            updated_by = $2,
+            reason = $3
+        WHERE id = 1
+        RETURNING *
+        """,
+        normalized,
+        updated_by,
+        reason,
+    )
+    if row is None:
+        return _default_controls()
+    return {
+        "global_automation_enabled": row["global_automation_enabled"],
+        "tutor_time_zone": row["tutor_time_zone"],
         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
         "updated_by": row["updated_by"],
         "reason": row["reason"],

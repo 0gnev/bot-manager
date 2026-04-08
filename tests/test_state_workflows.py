@@ -9,7 +9,16 @@ from __future__ import annotations
 
 from conftest import run_async
 
-from bridge.state import approvals, bookings, contacts, conversations, escalations, load_controls, save_controls
+from bridge.state import (
+    approvals,
+    bookings,
+    contacts,
+    conversations,
+    escalations,
+    load_controls,
+    save_controls,
+    save_tutor_time_zone,
+)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -270,6 +279,24 @@ def test_runtime_controls_persist_global_automation_state(db_clean) -> None:
         assert updated["global_automation_enabled"] is False
         assert reloaded["updated_by"] == "tutor"
         assert reloaded["reason"] == "maintenance"
+
+    run_async(_run())
+
+
+def test_runtime_controls_persist_tutor_time_zone(db_clean) -> None:
+    async def _run():
+        updated = await save_tutor_time_zone(
+            "",
+            tutor_time_zone="Europe/Moscow",
+            updated_by="tutor",
+            reason="timezone setup",
+        )
+        reloaded = await load_controls("")
+
+        assert updated["tutor_time_zone"] == "Europe/Moscow"
+        assert reloaded["tutor_time_zone"] == "Europe/Moscow"
+        assert reloaded["updated_by"] == "tutor"
+        assert reloaded["reason"] == "timezone setup"
 
     run_async(_run())
 

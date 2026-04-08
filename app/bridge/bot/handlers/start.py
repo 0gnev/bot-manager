@@ -15,6 +15,7 @@ from bridge.bot.filters import StudentBotFilter
 from bridge.config import Settings
 from bridge.delivery import send_student_message
 from bridge.state import bookings, contacts, conversations
+from bridge.timezones import parse_datetime
 from telegram_adapter.deeplink import parse_start_payload
 from telegram_adapter import templates
 
@@ -102,11 +103,22 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
 
     attendee = booking.get("attendee") or {}
     student_name = attendee.get("name", "")
+    contact = (
+        await contacts.load(settings.state_path, booking["contact_id"])
+        if booking.get("contact_id") is not None
+        else None
+    )
+    student_time_zone = attendee.get("timeZone") or (contact or {}).get("time_zone")
 
     await send_student_message(
         bot=message.bot,
         chat_id=message.chat.id,
-        text=templates.welcome(student_name, event_title, start_time),
+        text=templates.welcome(
+            student_name,
+            event_title,
+            start_time,
+            time_zone_name=student_time_zone,
+        ),
         booking_id=booking_id,
         contact_id=booking.get("contact_id"),
         settings=settings,
@@ -116,7 +128,13 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
     await send_student_message(
         bot=message.bot,
         chat_id=message.chat.id,
-        text=templates.session_details(event_title, start_time, end_time, meeting_url),
+        text=templates.session_details(
+            event_title,
+            start_time,
+            end_time,
+            meeting_url,
+            time_zone_name=student_time_zone,
+        ),
         booking_id=booking_id,
         contact_id=booking.get("contact_id"),
         settings=settings,
@@ -133,22 +151,21 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
 
 
 def _parse_dt(value: str | None):
-    if not value:
-        return None
-    from datetime import datetime, timezone
-    try:
-        return datetime.fromisoformat(value)
-    except Exception:
-        return None
+    return parse_datetime(value)
 
 
 def _multiple_bookings_notice(bookings_list: list[dict]) -> str:
     prepared = []
     for booking in bookings_list:
+        attendee = booking.get("attendee") or {}
         prepared.append(
             {
                 **booking,
-                "start_time_label": templates.fmt_dt(_parse_dt(booking.get("start_time"))),
+                "start_time_label": templates.fmt_dt(
+                    _parse_dt(booking.get("start_time")),
+                    time_zone_name=attendee.get("timeZone"),
+                    include_time_zone=True,
+                ),
             }
         )
     return templates.multiple_bookings_found(prepared)

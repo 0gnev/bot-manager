@@ -22,6 +22,7 @@ from bridge.delivery import send_student_message
 from bridge.escalation.handler import escalate, prepare_escalation_package
 from bridge.policies import evaluate_ai_response
 from bridge.state import bookings, contacts, conversations, escalations, load_controls, OperatingMode
+from bridge.timezones import parse_datetime
 from obsidian_adapter.reader import search as knowledge_search
 from telegram_adapter import templates
 
@@ -283,6 +284,13 @@ async def _handle_manual(
     """In manual mode: acknowledge and forward to tutor."""
     await message.answer("Ваш преподаватель ответит в ближайшее время.")
     tutor_chat_id = getattr(settings, "tutor_chat_id", None)
+    tutor_time_zone = None
+    try:
+        controls = await load_controls(settings.state_path)
+    except Exception:
+        logger.warning("Could not load tutor time zone for manual notice", exc_info=True)
+    else:
+        tutor_time_zone = controls.get("tutor_time_zone")
     reason = {
         "global-stop": "global_automation_disabled",
         "chat-stop": "chat_automation_disabled",
@@ -306,6 +314,7 @@ async def _handle_manual(
         question=student_text,
         event_title=(booking or {}).get("title"),
         start_time=_parse_dt((booking or {}).get("start_time")),
+        viewer_time_zone=tutor_time_zone,
         student_email=attendee.get("email") or contact.get("email"),
         student_phone=attendee.get("phone") or contact.get("phone"),
         student_telegram=attendee.get("telegram") or contact.get("telegram_username"),
@@ -525,22 +534,21 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
 
 
 def _parse_dt(value: str | None):
-    if not value:
-        return None
-    from datetime import datetime
-    try:
-        return datetime.fromisoformat(value)
-    except Exception:
-        return None
+    return parse_datetime(value)
 
 
 def _multiple_bookings_notice(bookings_list: list[dict]) -> str:
     prepared = []
     for booking in bookings_list:
+        attendee = booking.get("attendee") or {}
         prepared.append(
             {
                 **booking,
-                "start_time_label": templates.fmt_dt(_parse_dt(booking.get("start_time"))),
+                "start_time_label": templates.fmt_dt(
+                    _parse_dt(booking.get("start_time")),
+                    time_zone_name=attendee.get("timeZone"),
+                    include_time_zone=True,
+                ),
             }
         )
     return templates.multiple_bookings_found(prepared)
