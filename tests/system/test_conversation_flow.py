@@ -68,7 +68,7 @@ def test_full_conversation_flow(system_harness) -> None:
     assert webhook == {"ok": True}
 
     student_before = system_harness.telegram.sent_count(system_harness.student_token)
-    system_harness.send_student_text(f"/start {booking_id}")
+    system_harness.send_student_text("/start")
     system_harness.telegram.wait_for_sent_count(system_harness.student_token, student_before + 2)
     start_messages = system_harness.telegram.sent_since(system_harness.student_token, student_before)
     assert any("Привет" in (item.get("text") or "") for item in start_messages)
@@ -136,7 +136,7 @@ def test_stop_trigger_escalates_even_with_high_confidence_model(system_harness) 
     booking_id = "booking-stop-trigger"
     system_harness.post_planerka_webhook(_booking_payload(booking_id))
 
-    system_harness.send_student_text(f"/start {booking_id}")
+    system_harness.send_student_text("/start")
     system_harness.telegram.wait_for_sent_count(system_harness.student_token, 2)
 
     tutor_before = system_harness.telegram.sent_count(system_harness.owner_token)
@@ -176,7 +176,8 @@ def test_student_without_booking_gets_contact_only_reply(system_harness) -> None
         chat_id=system_harness.student_chat_id,
         contains="Привет! Чем могу помочь?",
     )
-    assert greeting["text"] == "Привет! Чем могу помочь?"
+    assert "Привет! Чем могу помочь?" in greeting["text"]
+    assert "Planerka" in greeting["text"]
 
     student_before = system_harness.telegram.sent_count(system_harness.student_token)
     system_harness.send_student_text(
@@ -196,43 +197,31 @@ def test_student_without_booking_gets_contact_only_reply(system_harness) -> None
     assert system_harness.list_tutor_escalations() == []
 
 
-def test_student_with_multiple_bookings_must_choose_deeplink(system_harness) -> None:
+def test_student_with_multiple_bookings_links_by_username_and_uses_resolved_context(system_harness) -> None:
     system_harness.post_planerka_webhook(
         _booking_payload_with_overrides(
             "booking-multi-a",
             title="Алгебра",
-            start_time="2026-04-06T12:30:00+06:00",
-            end_time="2026-04-06T13:00:00+06:00",
+            start_time="2035-04-06T12:30:00+06:00",
+            end_time="2035-04-06T13:00:00+06:00",
         )
     )
     system_harness.post_planerka_webhook(
         _booking_payload_with_overrides(
             "booking-multi-b",
             title="Геометрия",
-            start_time="2026-04-07T15:00:00+06:00",
-            end_time="2026-04-07T15:30:00+06:00",
+            start_time="2035-04-07T15:00:00+06:00",
+            end_time="2035-04-07T15:30:00+06:00",
         )
     )
 
     student_before = system_harness.telegram.sent_count(system_harness.student_token)
     system_harness.send_student_text("/start")
-    notice = system_harness.telegram.wait_for_sent_message(
-        system_harness.student_token,
-        after_index=student_before,
-        chat_id=system_harness.student_chat_id,
-        contains="У вас несколько активных записей.",
-    )
-
-    assert "Алгебра" in notice["text"]
-    assert "Геометрия" in notice["text"]
-
-    student_before = system_harness.telegram.sent_count(system_harness.student_token)
-    system_harness.send_student_text("/start booking-multi-b")
     system_harness.telegram.wait_for_sent_count(system_harness.student_token, student_before + 2)
     linked_messages = system_harness.telegram.sent_since(system_harness.student_token, student_before)
 
     assert any("Привет" in (item.get("text") or "") for item in linked_messages)
-    assert any("Геометрия" in (item.get("text") or "") for item in linked_messages)
+    assert any("Алгебра" in (item.get("text") or "") for item in linked_messages)
 
     student_before = system_harness.telegram.sent_count(system_harness.student_token)
     system_harness.send_student_text("Когда занятие и где ссылка?")
@@ -251,7 +240,7 @@ def test_multiple_parallel_escalations_are_independently_replyable(system_harnes
     second_question = "И еще нестандартный вопрос номер два, который нужно обсудить вручную"
 
     system_harness.post_planerka_webhook(_booking_payload(booking_id))
-    system_harness.send_student_text(f"/start {booking_id}")
+    system_harness.send_student_text("/start")
     system_harness.telegram.wait_for_sent_count(system_harness.student_token, 2)
 
     tutor_before = system_harness.telegram.sent_count(system_harness.owner_token)
@@ -350,7 +339,7 @@ def test_basic_question_after_escalation_is_still_answered_automatically(system_
     basic_question = "Когда занятие и где ссылка?"
 
     system_harness.post_planerka_webhook(_booking_payload(booking_id))
-    system_harness.send_student_text(f"/start {booking_id}")
+    system_harness.send_student_text("/start")
     system_harness.telegram.wait_for_sent_count(system_harness.student_token, 2)
 
     tutor_before = system_harness.telegram.sent_count(system_harness.owner_token)
@@ -382,6 +371,25 @@ def test_basic_question_after_escalation_is_still_answered_automatically(system_
     )
     assert "Занятие в запланированное время" in basic_reply["text"]
     assert system_harness.telegram.sent_count(system_harness.owner_token) == tutor_before
+
+
+def test_plain_booking_id_start_is_rejected_when_username_does_not_match(system_harness) -> None:
+    booking_id = "booking-username-guard"
+    system_harness.post_planerka_webhook(_booking_payload(booking_id))
+
+    student_before = system_harness.telegram.sent_count(system_harness.student_token)
+    system_harness.send_student_text(
+        f"/start {booking_id}",
+        username="another_student",
+        full_name="Another Student",
+    )
+    notice = system_harness.telegram.wait_for_sent_message(
+        system_harness.student_token,
+        after_index=student_before,
+        chat_id=system_harness.student_chat_id,
+        contains="Не удалось найти вашу запись.",
+    )
+    assert "подтверждения бронирования" in notice["text"]
 
 
 def test_tutor_reply_routes_contact_only_escalation_without_booking(system_harness) -> None:

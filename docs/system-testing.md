@@ -15,7 +15,7 @@ controlled fakes:
 The main happy-path system scenario covers:
 
 1. Planerka sends `BOOKING_CREATED`
-2. Student opens the bot and sends `/start {booking_id}`
+2. Student opens the bot and sends `/start` from the same Telegram username that was указан in Planerka
 3. Student asks a standard question and gets an automatic answer
 4. Student asks a non-standard question and it is escalated to the tutor bot
 5. Tutor replies in Telegram and the student receives the reply
@@ -25,7 +25,8 @@ Current edge cases covered:
 - duplicate Planerka webhook is ignored
 - stop-trigger phrases escalate even if the model response is high-confidence
 - student without booking stays in contact-only flow
-- one student with multiple active bookings must pick the deeplinked booking
+- one student with multiple active bookings can still be linked by exact username and use the resolved booking context
+- plain `/start {booking_id}` is rejected if the Telegram username does not match the Planerka booking
 - multiple pending escalations for one booking can coexist and be replied to independently
 - tutor reply is routed for contact-only escalation without a booking
 

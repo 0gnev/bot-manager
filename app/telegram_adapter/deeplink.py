@@ -20,7 +20,6 @@ def parse_start_payload(payload: str) -> str:
     """
     payload = payload.strip()
     try:
-        # Attempt base64url decode; if result is printable ASCII use it
         padded = payload + "=" * (-len(payload) % 4)
         decoded = base64.urlsafe_b64decode(padded).decode("utf-8")
         if decoded.isprintable() and decoded:

@@ -63,23 +63,18 @@ async def _upsert_contact(conn, data: dict) -> int | None:
     telegram_user_id = data.get("telegram_user_id")
     telegram_username = (attendee.get("telegram") or "").lstrip("@") or None
     email = attendee.get("email")
+    phone = attendee.get("phone")
+    name = attendee.get("name")
+    time_zone = attendee.get("timeZone")
 
-    if not telegram_user_id and not telegram_username and not email:
+    if not telegram_user_id and not telegram_username and not email and not phone:
         return None
 
-    # Try to find existing contact by telegram_user_id first, then username, then email.
+    # Prefer stable identifiers first, then fall back to Telegram username.
     contact_id = None
     if telegram_user_id:
         row = await conn.fetchrow(
             "SELECT id FROM contacts WHERE telegram_user_id = $1", telegram_user_id
-        )
-        if row:
-            contact_id = row["id"]
-
-    if contact_id is None and telegram_username:
-        row = await conn.fetchrow(
-            "SELECT id FROM contacts WHERE lower(telegram_username) = lower($1)",
-            telegram_username,
         )
         if row:
             contact_id = row["id"]
@@ -92,9 +87,21 @@ async def _upsert_contact(conn, data: dict) -> int | None:
         if row:
             contact_id = row["id"]
 
-    name = attendee.get("name")
-    phone = attendee.get("phone")
-    time_zone = attendee.get("timeZone")
+    if contact_id is None and phone:
+        row = await conn.fetchrow(
+            "SELECT id FROM contacts WHERE phone = $1",
+            phone,
+        )
+        if row:
+            contact_id = row["id"]
+
+    if contact_id is None and telegram_username:
+        row = await conn.fetchrow(
+            "SELECT id FROM contacts WHERE lower(telegram_username) = lower($1)",
+            telegram_username,
+        )
+        if row:
+            contact_id = row["id"]
 
     if contact_id is not None:
         await conn.execute(
@@ -183,9 +190,15 @@ def _resolve_contact_booking(rows) -> dict | None:
 async def save(state_path: str, booking_id: str, data: dict) -> None:
     pool = get_pool()
     contact_id = None
+    effective_telegram_user_id = data.get("telegram_user_id")
     async with pool.acquire() as conn:
         async with conn.transaction():
             contact_id = await _upsert_contact(conn, data)
+            if effective_telegram_user_id is None and contact_id is not None:
+                effective_telegram_user_id = await conn.fetchval(
+                    "SELECT telegram_user_id FROM contacts WHERE id = $1",
+                    contact_id,
+                )
 
             await conn.execute(
                 """
@@ -229,7 +242,7 @@ async def save(state_path: str, booking_id: str, data: dict) -> None:
                 data.get("meeting_url"),
                 json.dumps(data.get("custom_inputs")) if data.get("custom_inputs") is not None else None,
                 data.get("status", "active"),
-                data.get("telegram_user_id"),
+                effective_telegram_user_id,
             )
 
     # Export to Obsidian
