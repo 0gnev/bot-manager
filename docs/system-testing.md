@@ -10,6 +10,10 @@ controlled fakes:
 - fake OpenClaw API with deterministic responses
 - real PostgreSQL state and migrations
 
+Normal `CI` also runs the full pytest suite directly on GitHub Actions with a
+dedicated PostgreSQL service. The Docker runner described here is the preferred
+local path because it matches the intended Python 3.12 runtime more closely.
+
 ## What is covered
 
 The main happy-path system scenario covers:
@@ -59,6 +63,9 @@ These commands do not require local `pytest` installation. They:
 - create/use an isolated `bridge_test` database inside that PostgreSQL container
 - run tests in a disposable `python:3.12-slim` container
 - mount the current repo into that container
+
+The local Docker-backed test runner and the GitHub Actions `CI` job both target
+an isolated `bridge_test` database, not the live `bridge` database.
 
 Runner script:
 

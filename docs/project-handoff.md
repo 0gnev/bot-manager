@@ -44,12 +44,14 @@ The intended architecture is:
 Current runtime behavior is contact-first:
 
 - a Telegram student is represented by `contacts`
+- normalized reachability data is stored in `contact_channels`
 - chat metadata lives on `contacts` when a contact exists
 - `bookings` are optional context attached to messages, escalations, and approvals
 - students can talk to the bot without an existing booking
 - tutor controls are available both for booking-scoped chats and directly for contact-scoped chats
 - stored message records persist direction, delivery status, transport IDs,
   attachment metadata, and raw model output when available
+- transport-level delivery attempts are also stored in `deliveries`
 
 Why this matters:
 
@@ -325,8 +327,8 @@ The main operational source of truth is now PostgreSQL.
 
 - `postgres` Docker volume / external PostgreSQL host
   - this is where operational state lives at runtime:
-    contacts, bookings, messages, attachments, approvals, escalations,
-    runtime controls, idempotency keys
+    contacts, contact_channels, bookings, messages, attachments, approvals,
+    escalations, deliveries, runtime_controls, idempotency_keys
 - `data/audit`
   - audit trail is stored in `data/audit/audit.jsonl`
 - `data/logs`
@@ -468,6 +470,7 @@ Current tests cover:
 - OpenClaw client behavior
 - import from legacy JSON state
 - end-to-end system message flow in the Docker harness
+- live LLM smoke workflow for real-provider OpenClaw validation
 
 Runtime resiliency now includes bounded retries:
 
@@ -501,6 +504,7 @@ Relevant test files:
 - [test_state_workflows.py](/private/var/www/bot-manager/tests/test_state_workflows.py)
 - [test_api_tutor.py](/private/var/www/bot-manager/tests/test_api_tutor.py)
 - [test_openclaw_client.py](/private/var/www/bot-manager/tests/test_openclaw_client.py)
+- [test_openclaw_live.py](/private/var/www/bot-manager/tests/live/test_openclaw_live.py)
 
 ## 14. Known architectural gaps
 
@@ -508,7 +512,7 @@ These are not forgotten bugs; they are still-open follow-up tasks.
 
 - booking linking now relies on exact Planerka Telegram username matching plus existing telegram_user_id bindings; signed claim/deeplink tokens are intentionally deferred until there is a reliable delivery channel
 - emergency-stop/admin surface can be stronger
-- the target data model can still be normalized further if needed beyond the current `contact_channels` / `deliveries` split
+- optional event/audit-style tables such as `conversation_snapshots` or `escalation_events` can still be added later if operations actually need them
 
 Reference:
 
@@ -530,4 +534,3 @@ Keep a secure note outside Git with:
 - Obsidian vault path
 
 This document is the project memory.
-That private note is the operations memory.

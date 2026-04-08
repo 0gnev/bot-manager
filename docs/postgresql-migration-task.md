@@ -7,11 +7,13 @@ The core migration from JSON-file runtime state to PostgreSQL is complete.
 Bridge now uses PostgreSQL as the operational source of truth for:
 
 - contacts
+- contact_channels
 - bookings
 - messages
 - attachments
 - escalations
 - approvals
+- deliveries
 - runtime controls
 - idempotency keys
 
