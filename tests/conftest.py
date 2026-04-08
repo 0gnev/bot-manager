@@ -94,9 +94,13 @@ def db_clean(pg_pool):
             await conn.execute("""
                 UPDATE runtime_controls SET
                     global_automation_enabled = TRUE,
+                    operating_mode = 'normal',
                     tutor_time_zone = NULL,
                     updated_by = 'system',
                     reason = NULL,
+                    incident_reason = NULL,
+                    incident_started_at = NULL,
+                    incident_started_by = NULL,
                     updated_at = now()
                 WHERE id = 1
             """)

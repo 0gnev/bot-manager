@@ -37,6 +37,7 @@ from bridge.state import (
     escalations,
     load_controls,
     OperatingMode,
+    save_operating_mode,
     save_tutor_time_zone,
 )
 from bridge.timezones import format_datetime, parse_datetime, validate_time_zone_name
@@ -84,6 +85,131 @@ _DIRECT_TUTOR_SOURCES = {
 _REVIEWED_TUTOR_SOURCES = {
     "approval_approved",
 }
+
+
+def _command_arg(text: str | None) -> str | None:
+    parts = (text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        return None
+    return parts[1].strip() or None
+
+
+def _operating_mode_label(mode: str | None) -> str:
+    return {
+        "normal": "normal",
+        "degraded": "pause",
+        "frozen": "panic",
+    }.get((mode or "").strip().lower(), "normal")
+
+
+def _status_ts(value: str | None, *, time_zone_name: str | None) -> str | None:
+    dt = parse_datetime(value)
+    if dt is None:
+        return None
+    return format_datetime(dt, time_zone_name=time_zone_name, fmt="%d.%m.%Y %H:%M")
+
+
+def _operating_status_text(controls: dict) -> str:
+    mode = _operating_mode_label(controls.get("operating_mode"))
+    time_zone_name = controls.get("tutor_time_zone")
+    lines = [
+        f"Глобальный режим: <b>{mode}</b>",
+        "Автоответы: "
+        f"<b>{'включены' if controls.get('global_automation_enabled', True) else 'выключены'}</b>",
+    ]
+    incident_reason = controls.get("incident_reason")
+    if incident_reason:
+        lines.append(f"Причина инцидента: <b>{incident_reason}</b>")
+    incident_started = _status_ts(
+        controls.get("incident_started_at"),
+        time_zone_name=time_zone_name,
+    )
+    if incident_started:
+        lines.append(f"Инцидент начался: <b>{incident_started}</b>")
+    incident_started_by = controls.get("incident_started_by")
+    if incident_started_by:
+        lines.append(f"Кто включил режим: <b>{incident_started_by}</b>")
+    if time_zone_name:
+        lines.append(f"Часовой пояс преподавателя: <b>{time_zone_name}</b>")
+    updated_at = _status_ts(controls.get("updated_at"), time_zone_name=time_zone_name)
+    if updated_at:
+        lines.append(f"Последнее обновление: <b>{updated_at}</b>")
+    return "\n".join(lines)
+
+
+async def _set_operating_mode_via_tg(
+    message: Message,
+    settings: Settings,
+    *,
+    operating_mode: str,
+    reason: str | None,
+) -> None:
+    controls = await save_operating_mode(
+        settings.state_path,
+        operating_mode=operating_mode,
+        updated_by="tutor",
+        reason=reason,
+    )
+    await audit_log(
+        "automation",
+        "operating_mode_changed",
+        actor="tutor",
+        detail={
+            "operating_mode": controls.get("operating_mode"),
+            "reason": reason,
+            "via": "telegram",
+        },
+    )
+    await message.answer(_operating_status_text(controls))
+
+
+# -- Runtime control commands --------------------------------------------------
+
+@router.message(TutorBotFilter(), Command("status"))
+async def on_status(message: Message, role: str, settings: Settings) -> None:
+    if role != "tutor":
+        return
+    controls = await load_controls(settings.state_path)
+    await message.answer(_operating_status_text(controls))
+
+
+@router.message(TutorBotFilter(), Command("pause"))
+async def on_pause(message: Message, role: str, settings: Settings) -> None:
+    if role != "tutor":
+        return
+    reason = _command_arg(message.text) or "paused_via_telegram"
+    await _set_operating_mode_via_tg(
+        message,
+        settings,
+        operating_mode="degraded",
+        reason=reason,
+    )
+
+
+@router.message(TutorBotFilter(), Command("panic"))
+async def on_panic(message: Message, role: str, settings: Settings) -> None:
+    if role != "tutor":
+        return
+    reason = _command_arg(message.text) or "panic_via_telegram"
+    await _set_operating_mode_via_tg(
+        message,
+        settings,
+        operating_mode="frozen",
+        reason=reason,
+    )
+
+
+@router.message(TutorBotFilter(), Command("resume"))
+async def on_resume(message: Message, role: str, settings: Settings) -> None:
+    if role != "tutor":
+        return
+    reason = _command_arg(message.text) or "resumed_via_telegram"
+    await _set_operating_mode_via_tg(
+        message,
+        settings,
+        operating_mode="normal",
+        reason=reason,
+    )
 
 
 # -- /mode command -------------------------------------------------------------

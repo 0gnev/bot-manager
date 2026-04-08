@@ -35,6 +35,11 @@ docker compose --env-file .env up -d --build --force-recreate bridge
 - `task restart` — restart the stack
 - `task tunnel` — start `bridge` plus the temporary Cloudflare tunnel
 - `task tunnel-url` — print the current webhook tunnel URL
+- tutor Telegram emergency controls:
+  - `/status`
+  - `/pause <reason>`
+  - `/panic <reason>`
+  - `/resume <reason>`
 
 ## Tests
 - full Docker-backed test suite: `task test`

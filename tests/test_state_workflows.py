@@ -19,6 +19,7 @@ from bridge.state import (
     escalations,
     load_controls,
     save_controls,
+    save_operating_mode,
     save_tutor_time_zone,
 )
 
@@ -289,8 +290,54 @@ def test_runtime_controls_persist_global_automation_state(db_clean) -> None:
 
         assert initial["global_automation_enabled"] is True
         assert updated["global_automation_enabled"] is False
+        assert updated["operating_mode"] == "degraded"
         assert reloaded["updated_by"] == "tutor"
         assert reloaded["reason"] == "maintenance"
+        assert reloaded["incident_reason"] == "maintenance"
+        assert reloaded["incident_started_by"] == "tutor"
+
+    run_async(_run())
+
+
+def test_runtime_controls_persist_operating_mode_and_clear_incident_on_resume(db_clean) -> None:
+    async def _run():
+        initial = await load_controls("")
+        paused = await save_operating_mode(
+            "",
+            operating_mode="degraded",
+            updated_by="tutor",
+            reason="maintenance window",
+        )
+        frozen = await save_operating_mode(
+            "",
+            operating_mode="frozen",
+            updated_by="tutor",
+            reason="panic",
+        )
+        resumed = await save_operating_mode(
+            "",
+            operating_mode="normal",
+            updated_by="tutor",
+            reason="incident resolved",
+        )
+        reloaded = await load_controls("")
+
+        assert initial["operating_mode"] == "normal"
+        assert paused["operating_mode"] == "degraded"
+        assert paused["global_automation_enabled"] is False
+        assert paused["incident_reason"] == "maintenance window"
+        assert paused["incident_started_by"] == "tutor"
+        assert paused["incident_started_at"] is not None
+        assert frozen["operating_mode"] == "frozen"
+        assert frozen["global_automation_enabled"] is False
+        assert frozen["incident_reason"] == "panic"
+        assert resumed["operating_mode"] == "normal"
+        assert resumed["global_automation_enabled"] is True
+        assert resumed["incident_reason"] is None
+        assert resumed["incident_started_at"] is None
+        assert resumed["incident_started_by"] is None
+        assert reloaded["operating_mode"] == "normal"
+        assert reloaded["incident_reason"] is None
 
     run_async(_run())
 

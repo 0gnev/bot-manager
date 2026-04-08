@@ -229,6 +229,122 @@ def test_semi_auto_without_booking_submits_contact_only_approval(monkeypatch) ->
     assert message.answers == ["Ваш преподаватель проверит ответ и отправит его вручную."]
 
 
+def test_student_message_in_degraded_mode_routes_to_manual_with_notice(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        state_path="/tmp/state",
+        knowledge_path="/tmp/knowledge",
+        tutor_chat_id=1,
+    )
+    message = DummyStudentMessage("Во сколько занятие?")
+    manual_calls: list[dict[str, object]] = []
+
+    async def fake_resolve_contact_context(*args, **kwargs):
+        return ({"id": 41, "name": "Ivan Petrov"}, None, [])
+
+    async def fake_append(*args, **kwargs):
+        return None
+
+    async def fake_load_chat_by_contact(*args, **kwargs):
+        return SimpleNamespace(mode=OperatingMode.AUTO, automation_enabled=True)
+
+    async def fake_update_metadata(*args, **kwargs):
+        return SimpleNamespace(mode=OperatingMode.AUTO, automation_enabled=True)
+
+    async def fake_load_controls(*args, **kwargs):
+        return {
+            "global_automation_enabled": False,
+            "operating_mode": "degraded",
+            "incident_reason": "maintenance",
+        }
+
+    async def fake_audit_log(*args, **kwargs):
+        return None
+
+    async def fake_handle_manual(*args, **kwargs):
+        manual_calls.append(kwargs)
+        return None
+
+    class FailIfCalled:
+        def __init__(self, settings_obj) -> None:
+            self.settings = settings_obj
+
+        async def chat(self, **kwargs):
+            raise AssertionError("OpenClaw must not run in degraded mode")
+
+    monkeypatch.setattr(messages, "_resolve_contact_context", fake_resolve_contact_context)
+    monkeypatch.setattr(messages.conversations, "append", fake_append)
+    monkeypatch.setattr(messages.conversations, "load_chat_by_contact", fake_load_chat_by_contact)
+    monkeypatch.setattr(messages.conversations, "update_metadata", fake_update_metadata)
+    monkeypatch.setattr(messages, "load_controls", fake_load_controls)
+    monkeypatch.setattr(messages, "audit_log", fake_audit_log)
+    monkeypatch.setattr(messages, "_handle_manual", fake_handle_manual)
+    monkeypatch.setattr(messages, "OpenclawClient", FailIfCalled)
+
+    asyncio.run(messages.on_text(message, "student", settings))
+
+    assert len(manual_calls) == 1
+    assert manual_calls[0]["context_label"] == "pause-stop"
+    assert manual_calls[0].get("notify_student", True) is True
+
+
+def test_student_message_in_frozen_mode_routes_to_manual_without_notice(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        state_path="/tmp/state",
+        knowledge_path="/tmp/knowledge",
+        tutor_chat_id=1,
+    )
+    message = DummyStudentMessage("Во сколько занятие?")
+    manual_calls: list[dict[str, object]] = []
+
+    async def fake_resolve_contact_context(*args, **kwargs):
+        return ({"id": 41, "name": "Ivan Petrov"}, None, [])
+
+    async def fake_append(*args, **kwargs):
+        return None
+
+    async def fake_load_chat_by_contact(*args, **kwargs):
+        return SimpleNamespace(mode=OperatingMode.AUTO, automation_enabled=True)
+
+    async def fake_update_metadata(*args, **kwargs):
+        return SimpleNamespace(mode=OperatingMode.AUTO, automation_enabled=True)
+
+    async def fake_load_controls(*args, **kwargs):
+        return {
+            "global_automation_enabled": False,
+            "operating_mode": "frozen",
+            "incident_reason": "incident",
+        }
+
+    async def fake_audit_log(*args, **kwargs):
+        return None
+
+    async def fake_handle_manual(*args, **kwargs):
+        manual_calls.append(kwargs)
+        return None
+
+    class FailIfCalled:
+        def __init__(self, settings_obj) -> None:
+            self.settings = settings_obj
+
+        async def chat(self, **kwargs):
+            raise AssertionError("OpenClaw must not run in frozen mode")
+
+    monkeypatch.setattr(messages, "_resolve_contact_context", fake_resolve_contact_context)
+    monkeypatch.setattr(messages.conversations, "append", fake_append)
+    monkeypatch.setattr(messages.conversations, "load_chat_by_contact", fake_load_chat_by_contact)
+    monkeypatch.setattr(messages.conversations, "update_metadata", fake_update_metadata)
+    monkeypatch.setattr(messages, "load_controls", fake_load_controls)
+    monkeypatch.setattr(messages, "audit_log", fake_audit_log)
+    monkeypatch.setattr(messages, "_handle_manual", fake_handle_manual)
+    monkeypatch.setattr(messages, "OpenclawClient", FailIfCalled)
+
+    asyncio.run(messages.on_text(message, "student", settings))
+
+    assert len(manual_calls) == 1
+    assert manual_calls[0]["context_label"] == "panic-stop"
+    assert manual_calls[0]["notify_student"] is False
+
+
 def test_tutor_message_exports_contact_dialogue_without_llm(monkeypatch) -> None:
     settings = SimpleNamespace(
         state_path="/tmp/state",
@@ -363,6 +479,123 @@ def test_tutor_timezone_command_saves_timezone(monkeypatch) -> None:
     assert len(message.answers) == 1
     assert "Europe/Moscow" in message.answers[0]
     assert "сохранён" in message.answers[0]
+
+
+def test_tutor_pause_command_sets_degraded_mode(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    message = DummyMessage("/pause maintenance")
+    calls: list[dict[str, object]] = []
+
+    async def fake_save_operating_mode(*args, **kwargs):
+        calls.append(kwargs)
+        return {
+            "operating_mode": "degraded",
+            "global_automation_enabled": False,
+            "incident_reason": "maintenance",
+            "incident_started_by": "tutor",
+            "incident_started_at": "2026-04-08T10:00:00+00:00",
+            "updated_at": "2026-04-08T10:00:00+00:00",
+            "tutor_time_zone": "Asia/Bishkek",
+        }
+
+    async def fake_audit_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(tutor, "save_operating_mode", fake_save_operating_mode)
+    monkeypatch.setattr(tutor, "audit_log", fake_audit_log)
+
+    asyncio.run(tutor.on_pause(message, "tutor", settings))
+
+    assert calls == [
+        {
+            "operating_mode": "degraded",
+            "updated_by": "tutor",
+            "reason": "maintenance",
+        }
+    ]
+    assert len(message.answers) == 1
+    assert "Глобальный режим: <b>pause</b>" in message.answers[0]
+    assert "Причина инцидента: <b>maintenance</b>" in message.answers[0]
+
+
+def test_tutor_panic_command_sets_frozen_mode(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    message = DummyMessage("/panic upstream outage")
+
+    async def fake_save_operating_mode(*args, **kwargs):
+        return {
+            "operating_mode": "frozen",
+            "global_automation_enabled": False,
+            "incident_reason": "upstream outage",
+            "incident_started_by": "tutor",
+            "incident_started_at": "2026-04-08T10:05:00+00:00",
+            "updated_at": "2026-04-08T10:05:00+00:00",
+            "tutor_time_zone": "Asia/Bishkek",
+        }
+
+    async def fake_audit_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(tutor, "save_operating_mode", fake_save_operating_mode)
+    monkeypatch.setattr(tutor, "audit_log", fake_audit_log)
+
+    asyncio.run(tutor.on_panic(message, "tutor", settings))
+
+    assert len(message.answers) == 1
+    assert "Глобальный режим: <b>panic</b>" in message.answers[0]
+    assert "Причина инцидента: <b>upstream outage</b>" in message.answers[0]
+
+
+def test_tutor_resume_command_restores_normal_mode(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    message = DummyMessage("/resume incident resolved")
+
+    async def fake_save_operating_mode(*args, **kwargs):
+        return {
+            "operating_mode": "normal",
+            "global_automation_enabled": True,
+            "incident_reason": None,
+            "incident_started_by": None,
+            "incident_started_at": None,
+            "updated_at": "2026-04-08T10:10:00+00:00",
+            "tutor_time_zone": "Asia/Bishkek",
+        }
+
+    async def fake_audit_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(tutor, "save_operating_mode", fake_save_operating_mode)
+    monkeypatch.setattr(tutor, "audit_log", fake_audit_log)
+
+    asyncio.run(tutor.on_resume(message, "tutor", settings))
+
+    assert len(message.answers) == 1
+    assert "Глобальный режим: <b>normal</b>" in message.answers[0]
+    assert "Автоответы: <b>включены</b>" in message.answers[0]
+
+
+def test_tutor_status_command_reports_current_operating_mode(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    message = DummyMessage("/status")
+
+    async def fake_load_controls(*args, **kwargs):
+        return {
+            "operating_mode": "degraded",
+            "global_automation_enabled": False,
+            "incident_reason": "maintenance",
+            "incident_started_by": "tutor",
+            "incident_started_at": "2026-04-08T10:00:00+00:00",
+            "updated_at": "2026-04-08T10:00:00+00:00",
+            "tutor_time_zone": "Asia/Bishkek",
+        }
+
+    monkeypatch.setattr(tutor, "load_controls", fake_load_controls)
+
+    asyncio.run(tutor.on_status(message, "tutor", settings))
+
+    assert len(message.answers) == 1
+    assert "Глобальный режим: <b>pause</b>" in message.answers[0]
+    assert "Причина инцидента: <b>maintenance</b>" in message.answers[0]
 
 
 def test_tutor_message_export_requests_disambiguation(monkeypatch) -> None:

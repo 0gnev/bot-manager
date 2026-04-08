@@ -96,6 +96,11 @@ Tutor/operator review surface now exists in the API:
 - `GET /api/tutor/contacts/{contact_id}/chat` for contact-scoped message review
 - tutor Telegram flow can now export a full dialogue transcript directly into the tutor chat by username, e-mail, name, or explicit `booking_id`
 - explicit Telegram command: `/dialog username|email|имя|booking_id`
+- tutor Telegram runtime control commands are now:
+  - `/status` for the current global operating mode
+  - `/pause <reason>` to stop AI answers globally but keep manual escalation flow
+  - `/panic <reason>` to freeze student-facing automatic replies while still recording inbound traffic
+  - `/resume <reason>` to restore normal automation
 
 Important config constraint:
 
@@ -511,7 +516,6 @@ Relevant test files:
 These are not forgotten bugs; they are still-open follow-up tasks.
 
 - booking linking now relies on exact Planerka Telegram username matching plus existing telegram_user_id bindings; signed claim/deeplink tokens are intentionally deferred until there is a reliable delivery channel
-- emergency-stop/admin surface can be stronger
 - optional event/audit-style tables such as `conversation_snapshots` or `escalation_events` can still be added later if operations actually need them
 
 Reference:
