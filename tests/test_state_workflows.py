@@ -12,8 +12,10 @@ from conftest import run_async
 from bridge.state import (
     approvals,
     bookings,
+    contact_channels,
     contacts,
     conversations,
+    deliveries,
     escalations,
     load_controls,
     save_controls,
@@ -180,6 +182,16 @@ def test_conversation_messages_store_delivery_transport_and_attachments(db_clean
         assert chat.messages[1]["source"] == "ai_answer"
         assert chat.messages[1]["model_output"]["confidence"] == 0.93
 
+        inbound_deliveries = await deliveries.list_for_message("", chat.messages[0]["id"])
+        outbound_deliveries = await deliveries.list_for_message("", chat.messages[1]["id"])
+
+        assert inbound_deliveries[0]["transport"] == "telegram"
+        assert inbound_deliveries[0]["status"] == "received"
+        assert inbound_deliveries[0]["transport_message_id"] == 321
+        assert outbound_deliveries[0]["transport"] == "telegram"
+        assert outbound_deliveries[0]["status"] == "sent"
+        assert outbound_deliveries[0]["chat_id"] == 777
+
     run_async(_run())
 
 
@@ -313,6 +325,31 @@ def test_booking_save_and_load(db_clean) -> None:
         assert loaded["booking_id"] == "booking-save"
         assert loaded["status"] == "active"
         assert loaded["title"] == "Test Lesson"
+
+    run_async(_run())
+
+
+def test_booking_save_syncs_contact_channels(db_clean) -> None:
+    async def _run():
+        await _create_booking(
+            "booking-channels",
+            attendee={
+                "name": "Test Student",
+                "email": "student@example.com",
+                "phone": "+996 555 12 34 56",
+                "telegram": "@teststudent",
+                "timeZone": "Asia/Bishkek",
+            },
+        )
+        booking = await bookings.load("", "booking-channels")
+
+        assert booking is not None
+        channels = await contact_channels.list_for_contact("", booking["contact_id"])
+        by_type = {item["channel_type"]: item for item in channels}
+
+        assert by_type["telegram_username"]["normalized_value"] == "teststudent"
+        assert by_type["email"]["normalized_value"] == "student@example.com"
+        assert by_type["phone"]["normalized_value"] == "+996555123456"
 
     run_async(_run())
 

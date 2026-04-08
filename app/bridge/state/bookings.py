@@ -13,6 +13,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from bridge.db import get_pool
+from bridge.state.contact_channels import normalize_channel_value, sync_contact_channels_conn
 
 logger = logging.getLogger(__name__)
 
@@ -81,24 +82,45 @@ async def _upsert_contact(conn, data: dict) -> int | None:
 
     if contact_id is None and email:
         row = await conn.fetchrow(
-            "SELECT id FROM contacts WHERE lower(email) = lower($1)",
-            email,
+            """
+            SELECT contact_id AS id
+            FROM contact_channels
+            WHERE channel_type = 'email'
+              AND normalized_value = $1
+            ORDER BY is_primary DESC, updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            normalize_channel_value("email", email),
         )
         if row:
             contact_id = row["id"]
 
     if contact_id is None and phone:
         row = await conn.fetchrow(
-            "SELECT id FROM contacts WHERE phone = $1",
-            phone,
+            """
+            SELECT contact_id AS id
+            FROM contact_channels
+            WHERE channel_type = 'phone'
+              AND normalized_value = $1
+            ORDER BY is_primary DESC, updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            normalize_channel_value("phone", phone),
         )
         if row:
             contact_id = row["id"]
 
     if contact_id is None and telegram_username:
         row = await conn.fetchrow(
-            "SELECT id FROM contacts WHERE lower(telegram_username) = lower($1)",
-            telegram_username,
+            """
+            SELECT contact_id AS id
+            FROM contact_channels
+            WHERE channel_type = 'telegram_username'
+              AND normalized_value = $1
+            ORDER BY is_primary DESC, updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            normalize_channel_value("telegram_username", telegram_username),
         )
         if row:
             contact_id = row["id"]
@@ -124,6 +146,14 @@ async def _upsert_contact(conn, data: dict) -> int | None:
             phone,
             time_zone,
         )
+        await sync_contact_channels_conn(
+            conn,
+            contact_id,
+            telegram_user_id=telegram_user_id,
+            telegram_username=telegram_username,
+            email=email,
+            phone=phone,
+        )
         return contact_id
 
     row = await conn.fetchrow(
@@ -138,6 +168,14 @@ async def _upsert_contact(conn, data: dict) -> int | None:
         email,
         phone,
         time_zone,
+    )
+    await sync_contact_channels_conn(
+        conn,
+        row["id"],
+        telegram_user_id=telegram_user_id,
+        telegram_username=telegram_username,
+        email=email,
+        phone=phone,
     )
     return row["id"]
 
@@ -383,9 +421,11 @@ async def find_all_by_telegram_username(
                CASE WHEN c.active_booking_id = b.booking_id THEN 1 ELSE 0 END AS context_rank
         FROM bookings b
         JOIN contacts c ON c.id = b.contact_id
+        JOIN contact_channels cc ON cc.contact_id = c.id
         WHERE b.status = 'active'
           AND b.telegram_user_id IS NULL
-          AND lower(c.telegram_username) = $1
+          AND cc.channel_type = 'telegram_username'
+          AND cc.normalized_value = $1
         ORDER BY context_rank DESC,
                  b.updated_at DESC,
                  b.start_time ASC NULLS LAST,
@@ -407,9 +447,11 @@ async def find_by_telegram_username(
                CASE WHEN c.active_booking_id = b.booking_id THEN 1 ELSE 0 END AS context_rank
         FROM bookings b
         JOIN contacts c ON c.id = b.contact_id
+        JOIN contact_channels cc ON cc.contact_id = c.id
         WHERE b.status = 'active'
           AND b.telegram_user_id IS NULL
-          AND lower(c.telegram_username) = lower($1)
+          AND cc.channel_type = 'telegram_username'
+          AND cc.normalized_value = lower($1)
         ORDER BY context_rank DESC,
                  b.updated_at DESC,
                  b.start_time ASC NULLS LAST,

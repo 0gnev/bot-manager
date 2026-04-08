@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from conftest import run_async
 
 from bridge.delivery.service import send_student_message
-from bridge.state import bookings, conversations
+from bridge.state import bookings, conversations, deliveries
 
 
 class DummyBot:
@@ -66,6 +66,10 @@ def test_send_student_message_records_history_and_audit(db_clean) -> None:
         assert history[0]["source"] == "test"
         assert history[0]["transport_chat_id"] == 42
         assert history[0]["transport_message_id"] == 501
+        delivery_rows = await deliveries.list_for_message("", history[0]["id"])
+        assert delivery_rows[0]["transport"] == "telegram"
+        assert delivery_rows[0]["attempts"] == 1
+        assert delivery_rows[0]["recipient"] == "42"
 
         assert audit_events == [
             (
@@ -127,6 +131,10 @@ def test_send_student_message_records_failed_delivery_metadata(db_clean) -> None
         assert history[0]["delivery_status"] == "failed"
         assert history[0]["direction"] == "outbound"
         assert history[0]["transport_chat_id"] == 42
+        delivery_rows = await deliveries.list_for_message("", history[0]["id"])
+        assert delivery_rows[0]["status"] == "failed"
+        assert delivery_rows[0]["attempts"] == 1
+        assert "telegram down" in delivery_rows[0]["error_text"]
         assert any(
             event_type == "delivery"
             and action == "student_message_sent"
@@ -188,6 +196,8 @@ def test_send_student_message_retries_transient_failure_then_succeeds(db_clean) 
         assert len(history) == 1
         assert history[0]["delivery_status"] == "sent"
         assert history[0]["transport_message_id"] == 777
+        delivery_rows = await deliveries.list_for_message("", history[0]["id"])
+        assert delivery_rows[0]["attempts"] == 3
         assert audit_events[0][2]["detail"]["attempts"] == 3
         assert audit_events[0][2]["detail"]["message_type"] == "text"
 

@@ -40,7 +40,16 @@ def test_import_json_state_is_rerunnable_without_duplicates(db_clean, database_u
         {
             "booking_id": booking_id,
             "messages": [
-                {"role": "user", "content": "Первый вопрос", "ts": "2026-04-06T01:00:00+00:00"},
+                {
+                    "role": "user",
+                    "content": "Первый вопрос",
+                    "ts": "2026-04-06T01:00:00+00:00",
+                    "direction": "inbound",
+                    "source": "telegram_message",
+                    "delivery_status": "received",
+                    "transport_chat_id": 321,
+                    "transport_message_id": 654,
+                },
                 {"role": "assistant", "content": "Первый ответ", "ts": "2026-04-06T01:01:00+00:00"},
             ],
             "mode": "auto",
@@ -70,13 +79,27 @@ def test_import_json_state_is_rerunnable_without_duplicates(db_clean, database_u
             "SELECT COUNT(*) FROM messages WHERE booking_id = $1",
             booking_id,
         )
+        messages_with_contact_count = await pool.fetchval(
+            "SELECT COUNT(*) FROM messages WHERE booking_id = $1 AND contact_id IS NOT NULL",
+            booking_id,
+        )
         escalations_count = await pool.fetchval(
             "SELECT COUNT(*) FROM escalations WHERE booking_id = $1",
+            booking_id,
+        )
+        contact_channels_count = await pool.fetchval(
+            "SELECT COUNT(*) FROM contact_channels",
+        )
+        deliveries_count = await pool.fetchval(
+            "SELECT COUNT(*) FROM deliveries WHERE booking_id = $1",
             booking_id,
         )
 
         assert contacts_count == 1
         assert messages_count == 2
+        assert messages_with_contact_count == 2
         assert escalations_count == 1
+        assert contact_channels_count >= 2
+        assert deliveries_count == 1
 
     run_async(_run())
