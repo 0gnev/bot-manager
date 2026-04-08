@@ -236,6 +236,8 @@ def _reason_label(reason: str | None) -> str:
         "human_review_required": "нужна проверка преподавателя",
         "model_requested_escalation": "модель запросила преподавателя",
         "global_automation_disabled": "глобальная автоматизация отключена",
+        "global_automation_paused": "глобальная автоматизация поставлена на паузу",
+        "global_automation_frozen": "глобальный panic-режим активен",
         "chat_automation_disabled": "автоматизация чата отключена",
         "manual_mode": "чат переведён в ручной режим",
         "policy_low_confidence": "низкая уверенность ответа",

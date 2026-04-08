@@ -21,7 +21,15 @@ from bridge.config import Settings
 from bridge.delivery import send_student_message
 from bridge.escalation.handler import escalate, prepare_escalation_package
 from bridge.policies import evaluate_ai_response
-from bridge.state import bookings, contacts, conversations, escalations, load_controls, OperatingMode
+from bridge.state import (
+    bookings,
+    contacts,
+    conversations,
+    escalations,
+    load_controls,
+    normalize_operating_mode,
+    OperatingMode,
+)
 from bridge.timezones import parse_datetime
 from obsidian_adapter.reader import search as knowledge_search
 from telegram_adapter import templates
@@ -280,9 +288,11 @@ async def _handle_manual(
     student_text: str,
     *,
     context_label: str = "manual",
+    notify_student: bool = True,
 ) -> None:
     """In manual mode: acknowledge and forward to tutor."""
-    await message.answer("Ваш преподаватель ответит в ближайшее время.")
+    if notify_student:
+        await message.answer("Ваш преподаватель ответит в ближайшее время.")
     tutor_chat_id = getattr(settings, "tutor_chat_id", None)
     tutor_time_zone = None
     try:
@@ -295,7 +305,13 @@ async def _handle_manual(
         "global-stop": "global_automation_disabled",
         "chat-stop": "chat_automation_disabled",
         "manual": "manual_mode",
+        "pause-stop": "global_automation_paused",
+        "panic-stop": "global_automation_frozen",
     }.get(context_label, "human_review_required")
+    notice_context_label = {
+        "pause-stop": "pause",
+        "panic-stop": "panic",
+    }.get(context_label, context_label)
     package = await prepare_escalation_package(
         settings,
         booking=booking,
@@ -308,7 +324,7 @@ async def _handle_manual(
 
     attendee = (booking or {}).get("attendee") or {}
     notice = templates.manual_escalation_notice(
-        context_label=context_label,
+        context_label=notice_context_label,
         student_name=attendee.get("name") or contact.get("name") or "Студент",
         booking_id=booking_id,
         question=student_text,
@@ -428,6 +444,70 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
         contact_id=contact_id,
         chat=chat,
     )
+    operating_mode = normalize_operating_mode(controls.get("operating_mode"))
+
+    if operating_mode == "frozen":
+        await audit_log(
+            "automation",
+            "blocked_emergency",
+            booking_id=booking_id,
+            actor="system",
+            detail={
+                "mode": operating_mode,
+                "reason": controls.get("incident_reason") or controls.get("reason"),
+                "contact_id": contact_id,
+            },
+        )
+        await conversations.update_metadata(
+            settings.state_path,
+            booking_id=booking_id,
+            contact_id=contact_id,
+            current_stage="automation_frozen_global",
+            status="paused",
+        )
+        await _handle_manual(
+            message,
+            booking,
+            contact,
+            settings,
+            booking_id,
+            contact_id,
+            text,
+            context_label="panic-stop",
+            notify_student=False,
+        )
+        return
+
+    if operating_mode == "degraded":
+        await audit_log(
+            "automation",
+            "blocked_emergency",
+            booking_id=booking_id,
+            actor="system",
+            detail={
+                "mode": operating_mode,
+                "reason": controls.get("incident_reason") or controls.get("reason"),
+                "contact_id": contact_id,
+            },
+        )
+        await conversations.update_metadata(
+            settings.state_path,
+            booking_id=booking_id,
+            contact_id=contact_id,
+            current_stage="automation_degraded_global",
+            status="paused",
+        )
+        await _handle_manual(
+            message,
+            booking,
+            contact,
+            settings,
+            booking_id,
+            contact_id,
+            text,
+            context_label="pause-stop",
+        )
+        return
 
     if not controls.get("global_automation_enabled", True):
         await audit_log(
@@ -617,6 +697,72 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
         contact_id=contact_id,
         chat=chat,
     )
+    operating_mode = normalize_operating_mode(controls.get("operating_mode"))
+
+    if operating_mode == "frozen":
+        await audit_log(
+            "automation",
+            "blocked_emergency",
+            booking_id=booking_id,
+            actor="system",
+            detail={
+                "mode": operating_mode,
+                "reason": controls.get("incident_reason") or controls.get("reason"),
+                "message_type": "image",
+                "contact_id": contact_id,
+            },
+        )
+        await conversations.update_metadata(
+            settings.state_path,
+            booking_id=booking_id,
+            contact_id=contact_id,
+            current_stage="automation_frozen_global",
+            status="paused",
+        )
+        await _handle_manual(
+            message,
+            booking,
+            contact,
+            settings,
+            booking_id,
+            contact_id,
+            image_text,
+            context_label="panic-stop",
+            notify_student=False,
+        )
+        return
+
+    if operating_mode == "degraded":
+        await audit_log(
+            "automation",
+            "blocked_emergency",
+            booking_id=booking_id,
+            actor="system",
+            detail={
+                "mode": operating_mode,
+                "reason": controls.get("incident_reason") or controls.get("reason"),
+                "message_type": "image",
+                "contact_id": contact_id,
+            },
+        )
+        await conversations.update_metadata(
+            settings.state_path,
+            booking_id=booking_id,
+            contact_id=contact_id,
+            current_stage="automation_degraded_global",
+            status="paused",
+        )
+        await _handle_manual(
+            message,
+            booking,
+            contact,
+            settings,
+            booking_id,
+            contact_id,
+            image_text,
+            context_label="pause-stop",
+        )
+        return
 
     if not controls.get("global_automation_enabled", True):
         await audit_log(

@@ -25,7 +25,7 @@ Source of truth: the compact architecture prompt provided for Bot Manager.
 - [x] Add tutor-facing dialogue review/list endpoints so conversations can be reviewed without reading raw state files.
 - [x] Tighten student-booking linking around exact Planerka Telegram username matching, safer contact merges, and guarded deeplink fallback.
 - [x] Add retry/backoff policy around outbound Telegram delivery and OpenClaw calls.
-- [ ] Add an explicit emergency-stop/admin control surface beyond raw REST toggles.
+- [x] Add an explicit emergency-stop/admin control surface beyond raw REST toggles.
 - [x] Run the automated test suite in the intended Python 3.12 environment and wire it into the normal dev workflow.
 - [x] Keep first-rollout PostgreSQL backup/import/rollback runbooks explicit for any older environment still carrying legacy `data/state/`.
 - [x] Normalize `contact_channels` and `deliveries` into dedicated tables while keeping mirrored legacy columns for compatibility during rollout.
