@@ -5,6 +5,7 @@ Contact state helpers backed by PostgreSQL.
 from __future__ import annotations
 
 from bridge.db import get_pool
+from bridge.state.contact_channels import sync_contact_channels_conn
 
 
 def _row_to_dict(row) -> dict:
@@ -37,8 +38,12 @@ async def load_by_telegram_username(state_path: str, telegram_username: str) -> 
     normalized = (telegram_username or "").lstrip("@")
     row = await get_pool().fetchrow(
         """
-        SELECT * FROM contacts
-        WHERE lower(telegram_username) = lower($1)
+        SELECT c.*
+        FROM contacts c
+        JOIN contact_channels cc ON cc.contact_id = c.id
+        WHERE cc.channel_type = 'telegram_username'
+          AND cc.normalized_value = lower($1)
+        ORDER BY cc.is_primary DESC, c.updated_at DESC, c.id DESC
         LIMIT 1
         """,
         normalized,
@@ -59,9 +64,11 @@ async def find_all_with_active_bookings_by_telegram_username(
         """
         SELECT DISTINCT c.*
         FROM contacts c
+        JOIN contact_channels cc ON cc.contact_id = c.id
         JOIN bookings b ON b.contact_id = c.id
         WHERE b.status = 'active'
-          AND lower(c.telegram_username) = lower($1)
+          AND cc.channel_type = 'telegram_username'
+          AND cc.normalized_value = lower($1)
         ORDER BY c.updated_at DESC, c.id DESC
         """,
         normalized,
@@ -136,6 +143,12 @@ async def ensure_telegram_contact(
                     normalized_username,
                     name,
                 )
+                await sync_contact_channels_conn(
+                    conn,
+                    row["id"],
+                    telegram_user_id=telegram_user_id,
+                    telegram_username=normalized_username,
+                )
                 return _row_to_dict(row)
 
             row = await conn.fetchrow(
@@ -152,6 +165,12 @@ async def ensure_telegram_contact(
                 telegram_user_id,
                 normalized_username,
                 name,
+            )
+            await sync_contact_channels_conn(
+                conn,
+                row["id"],
+                telegram_user_id=telegram_user_id,
+                telegram_username=normalized_username or row["telegram_username"],
             )
             return _row_to_dict(row)
 
@@ -211,10 +230,18 @@ async def attach_telegram_identity(
                     name,
                     target["name"],
                         target["email"],
-                        target["phone"],
-                        target["time_zone"],
-                        target["active_booking_id"],
-                    )
+                    target["phone"],
+                    target["time_zone"],
+                    target["active_booking_id"],
+                )
+                await sync_contact_channels_conn(
+                    conn,
+                    keeper_id,
+                    telegram_user_id=telegram_user_id,
+                    telegram_username=normalized_username or row["telegram_username"],
+                    email=row["email"],
+                    phone=row["phone"],
+                )
                 await conn.execute("DELETE FROM contacts WHERE id = $1", contact_id)
                 return _row_to_dict(row) if row is not None else None
 
@@ -235,6 +262,14 @@ async def attach_telegram_identity(
             )
             if row is None:
                 return None
+            await sync_contact_channels_conn(
+                conn,
+                row["id"],
+                telegram_user_id=telegram_user_id,
+                telegram_username=normalized_username or row["telegram_username"],
+                email=row["email"],
+                phone=row["phone"],
+            )
             return _row_to_dict(row)
 
 

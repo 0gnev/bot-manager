@@ -39,7 +39,7 @@ serving as the first production-grade storage layer.
 
 - [x] Keep first-rollout backup/import/rollback runbooks explicit for older environments that still carry legacy `data/state/`.
 - [x] Harden student-booking linking around exact Planerka Telegram username matching and guarded deeplink fallback.
-- [ ] Decide whether separate `contact_channels` and `deliveries` tables are still needed or whether the current denormalized design is sufficient.
+- [x] Normalize `contact_channels` and `deliveries` into dedicated tables while keeping mirrored contact/message fields for compatibility during rollout.
 - [ ] Add optional follow-up tables such as `conversation_snapshots` and `escalation_events` only if operationally justified.
 
 ## Target Data Model
@@ -50,8 +50,9 @@ Current implementation status:
   - implemented
   - canonical student identity across multiple bookings
 - `contact_channels`
-  - not implemented as a separate table
-  - current design stores Telegram username, e-mail, phone, and similar fields directly on `contacts`
+  - implemented
+  - stores normalized Telegram username, Telegram user id, e-mail, phone, and similar reachability identifiers per contact
+  - `contacts.telegram_username/email/phone` remain mirrored for compatibility during rollout
 - `bookings`
   - implemented
   - stores booking payload, organizer/attendee metadata, status, and meeting info
@@ -62,8 +63,9 @@ Current implementation status:
   - implemented
   - one row per escalated question with its own `escalation_id`
 - `deliveries`
-  - not implemented as a separate table
-  - current design stores delivery status and transport metadata on messages plus audit logs
+  - implemented
+  - stores one transport-level delivery record per message and transport
+  - `messages.delivery_status/transport_*` remain mirrored for compatibility during rollout
 - `idempotency_keys`
   - implemented
   - webhook/update deduplication with expiry metadata

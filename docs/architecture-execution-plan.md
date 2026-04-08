@@ -28,5 +28,5 @@ Source of truth: the compact architecture prompt provided for Bot Manager.
 - [ ] Add an explicit emergency-stop/admin control surface beyond raw REST toggles.
 - [x] Run the automated test suite in the intended Python 3.12 environment and wire it into the normal dev workflow.
 - [x] Keep first-rollout PostgreSQL backup/import/rollback runbooks explicit for any older environment still carrying legacy `data/state/`.
-- [ ] Decide whether separate `contact_channels` / `deliveries` tables are still needed or whether the current denormalized design is sufficient.
+- [x] Normalize `contact_channels` and `deliveries` into dedicated tables while keeping mirrored legacy columns for compatibility during rollout.
 - [ ] Update `uvicorn`/`websockets` to versions that no longer rely on the deprecated legacy websocket API, then remove the resulting system-test warnings.

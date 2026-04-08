@@ -26,6 +26,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import asyncpg
+from bridge.state.contact_channels import sync_contact_channels_conn
+from bridge.state.deliveries import record_conn as record_delivery_conn
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 logger = logging.getLogger(__name__)
@@ -97,6 +99,14 @@ async def _upsert_contact_from_attendee(
             attendee.get("phone"),
             attendee.get("timeZone"),
         )
+        await sync_contact_channels_conn(
+            conn,
+            contact_id,
+            telegram_user_id=telegram_user_id,
+            telegram_username=telegram_username,
+            email=email,
+            phone=attendee.get("phone"),
+        )
         return contact_id
 
     row = await conn.fetchrow(
@@ -112,7 +122,23 @@ async def _upsert_contact_from_attendee(
         attendee.get("phone"),
         attendee.get("timeZone"),
     )
+    await sync_contact_channels_conn(
+        conn,
+        row["id"],
+        telegram_user_id=telegram_user_id,
+        telegram_username=telegram_username,
+        email=email,
+        phone=attendee.get("phone"),
+    )
     return row["id"]
+
+
+def _resolve_transport(source: str | None, chat_id, transport_message_id) -> str | None:
+    if source and "telegram" in source:
+        return "telegram"
+    if chat_id is not None or transport_message_id is not None:
+        return "telegram"
+    return None
 
 
 async def import_bookings(conn: asyncpg.Connection, state_path: Path) -> int:
@@ -204,13 +230,14 @@ async def import_conversations(conn: asyncpg.Connection, state_path: Path) -> in
 
         booking_id = path.stem
 
-        # Check that booking exists
-        exists = await conn.fetchval(
-            "SELECT 1 FROM bookings WHERE booking_id = $1", booking_id
+        booking_row = await conn.fetchrow(
+            "SELECT booking_id, contact_id FROM bookings WHERE booking_id = $1",
+            booking_id,
         )
-        if not exists:
+        if booking_row is None:
             logger.warning("Skipping conversation %s: booking not found", booking_id)
             continue
+        contact_id = booking_row["contact_id"]
 
         # Handle legacy format (plain list) vs new format (dict with metadata)
         if isinstance(data, list):
@@ -220,11 +247,14 @@ async def import_conversations(conn: asyncpg.Connection, state_path: Path) -> in
             messages = data.get("messages", [])
             meta = data
 
-        # Update chat metadata on booking
+        # Update chat metadata on contact when available, otherwise on booking.
         if meta:
+            target_id = contact_id if contact_id is not None else booking_id
+            target_table = "contacts" if contact_id is not None else "bookings"
+            target_key = "id" if contact_id is not None else "booking_id"
             await conn.execute(
-                """
-                UPDATE bookings SET
+                f"""
+                UPDATE {target_table} SET
                     mode = $2,
                     status = $3,
                     automation_enabled = $4,
@@ -235,9 +265,9 @@ async def import_conversations(conn: asyncpg.Connection, state_path: Path) -> in
                     confidence = $9,
                     escalation_reason = $10,
                     draft = $11::jsonb
-                WHERE booking_id = $1
+                WHERE {target_key} = $1
                 """,
-                booking_id,
+                target_id,
                 meta.get("mode", "auto"),
                 meta.get("status", "active"),
                 meta.get("automation_enabled", True),
@@ -255,6 +285,12 @@ async def import_conversations(conn: asyncpg.Connection, state_path: Path) -> in
             ts = _parse_dt(msg.get("ts")) or datetime.now(timezone.utc)
             role = msg.get("role", "user")
             content = msg.get("content", "")
+            direction = msg.get("direction") or ("inbound" if role == "user" else "outbound" if role == "assistant" else "internal")
+            source = msg.get("source")
+            delivery_status = msg.get("delivery_status") or ("received" if direction == "inbound" else "sent" if direction == "outbound" else "recorded")
+            transport_chat_id = msg.get("transport_chat_id")
+            transport_message_id = msg.get("transport_message_id")
+            model_output = msg.get("model_output")
             exists = await conn.fetchval(
                 """
                 SELECT 1
@@ -272,13 +308,78 @@ async def import_conversations(conn: asyncpg.Connection, state_path: Path) -> in
             )
             if exists:
                 continue
-            await conn.execute(
-                "INSERT INTO messages (booking_id, role, content, created_at) VALUES ($1, $2, $3, $4)",
+            message_row = await conn.fetchrow(
+                """
+                INSERT INTO messages (
+                    contact_id,
+                    booking_id,
+                    role,
+                    content,
+                    direction,
+                    source,
+                    delivery_status,
+                    transport_chat_id,
+                    transport_message_id,
+                    model_output,
+                    created_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
+                RETURNING id
+                """,
+                contact_id,
                 booking_id,
                 role,
                 content,
+                direction,
+                source,
+                delivery_status,
+                transport_chat_id,
+                transport_message_id,
+                json.dumps(model_output) if model_output is not None else None,
                 ts,
             )
+            for attachment in msg.get("attachments") or []:
+                await conn.execute(
+                    """
+                    INSERT INTO attachments (
+                        message_id,
+                        contact_id,
+                        booking_id,
+                        file_id,
+                        file_type,
+                        mime_type,
+                        local_path,
+                        caption,
+                        created_at
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    """,
+                    message_row["id"],
+                    contact_id,
+                    booking_id,
+                    attachment.get("file_id"),
+                    attachment.get("file_type", "file"),
+                    attachment.get("mime_type"),
+                    attachment.get("local_path"),
+                    attachment.get("caption"),
+                    ts,
+                )
+            transport = _resolve_transport(source, transport_chat_id, transport_message_id)
+            if transport is not None:
+                await record_delivery_conn(
+                    conn,
+                    message_id=message_row["id"],
+                    contact_id=contact_id,
+                    booking_id=booking_id,
+                    direction=direction,
+                    transport=transport,
+                    source=source,
+                    status=delivery_status,
+                    chat_id=transport_chat_id,
+                    transport_message_id=transport_message_id,
+                    attempts=1,
+                    payload=msg.get("delivery_payload"),
+                )
         count += 1
 
     logger.info("Imported conversations for %d bookings", count)
@@ -299,10 +400,11 @@ async def import_escalations(conn: asyncpg.Connection, state_path: Path) -> int:
             continue
 
         booking_id = data.get("booking_id", path.stem)
-        exists = await conn.fetchval(
-            "SELECT 1 FROM bookings WHERE booking_id = $1", booking_id
+        booking_row = await conn.fetchrow(
+            "SELECT booking_id, contact_id FROM bookings WHERE booking_id = $1",
+            booking_id,
         )
-        if not exists:
+        if booking_row is None:
             logger.warning("Skipping escalation %s: booking not found", booking_id)
             continue
 
@@ -345,11 +447,12 @@ async def import_escalations(conn: asyncpg.Connection, state_path: Path) -> int:
         await conn.execute(
             """
             INSERT INTO escalations (
-                booking_id, status, reason, question, tutor_message_id,
+                booking_id, contact_id, status, reason, question, tutor_message_id,
                 tutor_reply, resolved_by, created_at, resolved_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             """,
             booking_id,
+            booking_row["contact_id"],
             status,
             reason,
             question,
@@ -382,24 +485,26 @@ async def import_approvals(conn: asyncpg.Connection, state_path: Path) -> int:
         if not booking_id:
             continue
 
-        exists = await conn.fetchval(
-            "SELECT 1 FROM bookings WHERE booking_id = $1", booking_id
+        booking_row = await conn.fetchrow(
+            "SELECT booking_id, contact_id FROM bookings WHERE booking_id = $1",
+            booking_id,
         )
-        if not exists:
+        if booking_row is None:
             logger.warning("Skipping approval %s: booking not found", data.get("approval_id"))
             continue
 
         await conn.execute(
             """
             INSERT INTO approvals (
-                approval_id, booking_id, student_chat_id, draft_content,
+                approval_id, booking_id, contact_id, student_chat_id, draft_content,
                 action, confidence, status, reviewer, review_channel,
                 tutor_message_id, created_at, resolved_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             ON CONFLICT (approval_id) DO NOTHING
             """,
             data.get("approval_id", path.stem),
             booking_id,
+            booking_row["contact_id"],
             data.get("student_chat_id", 0),
             data.get("draft_content", ""),
             data.get("action", "answer"),

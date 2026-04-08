@@ -20,6 +20,7 @@ from typing import Any
 
 from bridge.db import get_pool
 from bridge.state.chat import Chat, OperatingMode
+from bridge.state import deliveries as delivery_state
 
 logger = logging.getLogger(__name__)
 
@@ -312,8 +313,13 @@ async def append(
     direction: str | None = None,
     source: str | None = None,
     delivery_status: str | None = None,
+    transport: str | None = None,
     transport_chat_id: int | None = None,
     transport_message_id: int | None = None,
+    delivery_attempts: int | None = None,
+    delivery_recipient: str | None = None,
+    delivery_error_text: str | None = None,
+    delivery_payload: dict | None = None,
     model_output: dict | None = None,
     attachments: list[dict] | None = None,
 ) -> dict[str, Any]:
@@ -324,6 +330,11 @@ async def append(
             scope = await _resolve_scope(conn, booking_id=booking_id, contact_id=contact_id)
             resolved_direction = direction or _default_direction(role)
             resolved_delivery_status = delivery_status or _default_delivery_status(resolved_direction)
+            resolved_transport = transport or _resolve_transport(
+                source,
+                transport_chat_id=transport_chat_id,
+                transport_message_id=transport_message_id,
+            )
             row = await conn.fetchrow(
                 """
                 INSERT INTO messages (
@@ -381,6 +392,23 @@ async def append(
                     attachment.get("caption"),
                 )
                 created_attachments.append(_attachment_row_to_dict(attachment_row))
+            if resolved_transport is not None:
+                await delivery_state.record_conn(
+                    conn,
+                    message_id=row["id"],
+                    contact_id=scope["contact_id"],
+                    booking_id=scope["booking_id"],
+                    direction=resolved_direction,
+                    transport=resolved_transport,
+                    source=source,
+                    status=resolved_delivery_status,
+                    chat_id=transport_chat_id,
+                    transport_message_id=transport_message_id,
+                    attempts=max(int(delivery_attempts or 1), 1),
+                    recipient=delivery_recipient,
+                    error_text=delivery_error_text,
+                    payload=delivery_payload,
+                )
             if scope["contact_id"] is not None:
                 await conn.execute(
                     "UPDATE contacts SET updated_at = now() WHERE id = $1",
@@ -453,3 +481,16 @@ def _default_delivery_status(direction: str) -> str:
     if direction == "outbound":
         return "sent"
     return "recorded"
+
+
+def _resolve_transport(
+    source: str | None,
+    *,
+    transport_chat_id: int | None,
+    transport_message_id: int | None,
+) -> str | None:
+    if source and "telegram" in source:
+        return "telegram"
+    if transport_chat_id is not None or transport_message_id is not None:
+        return "telegram"
+    return None
