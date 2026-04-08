@@ -49,6 +49,7 @@ class UvicornThreadServer:
             port=self.port,
             log_level="warning",
             access_log=False,
+            ws="none",
         )
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._run, daemon=True)

@@ -508,10 +508,7 @@ These are not forgotten bugs; they are still-open follow-up tasks.
 
 - booking linking now relies on exact Planerka Telegram username matching plus existing telegram_user_id bindings; signed claim/deeplink tokens are intentionally deferred until there is a reliable delivery channel
 - emergency-stop/admin surface can be stronger
-- the target data model can still be normalized further if needed, for example
-  by separating `contact_channels` and `deliveries` into dedicated tables
-- `uvicorn` / websocket dependency warnings in system tests should still be
-  cleaned up
+- the target data model can still be normalized further if needed beyond the current `contact_channels` / `deliveries` split
 
 Reference:
 

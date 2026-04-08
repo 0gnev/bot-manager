@@ -29,4 +29,4 @@ Source of truth: the compact architecture prompt provided for Bot Manager.
 - [x] Run the automated test suite in the intended Python 3.12 environment and wire it into the normal dev workflow.
 - [x] Keep first-rollout PostgreSQL backup/import/rollback runbooks explicit for any older environment still carrying legacy `data/state/`.
 - [x] Normalize `contact_channels` and `deliveries` into dedicated tables while keeping mirrored legacy columns for compatibility during rollout.
-- [ ] Update `uvicorn`/`websockets` to versions that no longer rely on the deprecated legacy websocket API, then remove the resulting system-test warnings.
+- [x] Disable unused websocket support in `uvicorn` runtime and system harness so legacy `websockets` warnings no longer fire during tests.
