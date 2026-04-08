@@ -73,6 +73,7 @@ async def run_server(app: FastAPI, settings) -> None:
         log_level=str(getattr(settings, "log_level", "INFO")).lower(),
         access_log=True,
         log_config=None,
+        ws="none",
     )
     server = uvicorn.Server(config)
     logger.info("Starting webhook server on %s:%s", settings.host, settings.port)
