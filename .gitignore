@@ -21,6 +21,8 @@ data/knowledge/conversations/
 data/knowledge/escalations/
 data/audit/*
 !data/audit/.gitkeep
+data/backups/*
+!data/backups/.gitkeep
 
 # ── logs / temp / cache ───────────────────────────────────────────────────────
 *.log

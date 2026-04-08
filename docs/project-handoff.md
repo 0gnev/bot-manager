@@ -344,6 +344,42 @@ The main operational source of truth is now PostgreSQL.
 If you move environments or restore from backup, back up both the PostgreSQL
 data and the operational folders under `data/`.
 
+### First-rollout legacy state automation
+
+For environments that still carry old JSON state under `data/state`, use:
+
+```bash
+task pg-first-rollout
+```
+
+This creates a timestamped directory under:
+
+- `data/backups/postgres-first-rollout/<timestamp>`
+
+Inside that directory:
+
+- `legacy-state.tar.gz`
+  - backup of `data/state` if legacy JSON files still exist
+- `bridge-pre-rollout.dump`
+  - PostgreSQL custom-format dump from before any import
+- `manifest.env`
+  - recorded paths and rollout mode for rollback
+
+If you need to force or skip the import step:
+
+```bash
+IMPORT_LEGACY_STATE=always task pg-first-rollout
+IMPORT_LEGACY_STATE=never task pg-first-rollout
+```
+
+Rollback uses the saved manifest:
+
+```bash
+BACKUP_DIR=data/backups/postgres-first-rollout/<timestamp> task pg-rollback
+```
+
+If `BACKUP_DIR` is omitted, the latest first-rollout backup directory is used.
+
 ## 11. Fast operational checks after deployment
 
 ### Health check
@@ -472,9 +508,6 @@ These are not forgotten bugs; they are still-open follow-up tasks.
 
 - booking linking now relies on exact Planerka Telegram username matching plus existing telegram_user_id bindings; signed claim/deeplink tokens are intentionally deferred until there is a reliable delivery channel
 - emergency-stop/admin surface can be stronger
-- the PostgreSQL migration is functionally complete, but first-rollout
-  backup/import/rollback runbooks should be kept explicit for older
-  environments
 - the target data model can still be normalized further if needed, for example
   by separating `contact_channels` and `deliveries` into dedicated tables
 - `uvicorn` / websocket dependency warnings in system tests should still be
