@@ -139,6 +139,7 @@ async def _handle_semi_auto(
         booking_id=booking_id,
         contact_id=contact_id,
         student_chat_id=message.from_user.id,
+        student_question=student_text,
         draft_content=content,
         action=action,
         confidence=confidence,

@@ -142,6 +142,37 @@ class OpenclawClient:
             return None
         return parsed
 
+    async def propose_knowledge_candidate(
+        self,
+        *,
+        source_question: str | None,
+        final_answer: str,
+        booking_context: dict | None = None,
+    ) -> dict | None:
+        system = render_prompt(
+            "knowledge_candidate",
+            booking_context=json.dumps(_sanitize_context(booking_context), ensure_ascii=False, indent=2),
+            source_question=source_question or "—",
+            final_answer=final_answer,
+        )
+        raw = await self._request_response_text(
+            [
+                {"role": "system", "content": system},
+                {
+                    "role": "user",
+                    "content": f"Вопрос:\n{source_question or '—'}\n\nОтвет:\n{final_answer}",
+                },
+            ],
+            mode="knowledge_candidate",
+        )
+        if raw is None:
+            return None
+        parsed = _coerce_knowledge_candidate_response(raw)
+        if parsed is None:
+            logger.warning("Openclaw returned invalid knowledge candidate payload")
+            return None
+        return parsed
+
     # -- Internals -------------------------------------------------------------
 
     def _build_messages(
@@ -430,6 +461,34 @@ def _coerce_approval_revision_response(raw: str) -> dict[str, Any] | None:
     else:
         parsed["confidence"] = 0.0
     parsed["content"] = content.strip()
+    return parsed
+
+
+def _coerce_knowledge_candidate_response(raw: str) -> dict[str, Any] | None:
+    parsed = _parse_json_object(raw)
+    if not isinstance(parsed, dict):
+        return None
+
+    should_save = parsed.get("should_save")
+    if not isinstance(should_save, bool):
+        return None
+    parsed["should_save"] = should_save
+
+    reason = parsed.get("reason")
+    parsed["reason"] = reason.strip() if isinstance(reason, str) else ""
+
+    if not should_save:
+        return parsed
+
+    title = parsed.get("title")
+    content_markdown = parsed.get("content_markdown")
+    if not isinstance(title, str) or not title.strip():
+        return None
+    if not isinstance(content_markdown, str) or not content_markdown.strip():
+        return None
+
+    parsed["title"] = title.strip()
+    parsed["content_markdown"] = content_markdown.strip()
     return parsed
 
 

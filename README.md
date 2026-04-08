@@ -17,6 +17,7 @@ cases to the tutor, and lets the tutor continue the dialogue from Telegram.
 - blocks off-topic / unsafe answers through policy checks
 - escalates to the tutor when the model should not answer
 - supports tutor review, approval, revision, direct-send, and dialogue export
+- can propose reusable knowledge notes from tutor-approved answers, but saves them only after explicit tutor approval
 - supports Telegram-controlled global runtime modes:
   - `/status`
   - `/pause <reason>`
@@ -206,6 +207,8 @@ Behavioral notes:
 - plain reply to an approval card means “revise the draft”
 - `/send ...` in reply to an approval card means “send this exact text now”
 - `Отправить студенту` sends the current draft as-is
+- after a tutor-approved answer, the bot may suggest a reusable knowledge note
+- that suggestion is never auto-saved; the tutor must explicitly confirm it
 
 ## Production deploy
 

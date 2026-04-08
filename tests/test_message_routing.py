@@ -40,6 +40,30 @@ class DummyStudentMessage(DummyMessage):
         self.bot = object()
 
 
+class DummyCallbackMessage:
+    def __init__(self) -> None:
+        self.reply_markup = object()
+        self.replies: list[str] = []
+        self.reply_markup_cleared = False
+
+    async def edit_reply_markup(self, reply_markup=None):
+        self.reply_markup = reply_markup
+        self.reply_markup_cleared = reply_markup is None
+
+    async def reply(self, text: str, **kwargs) -> None:
+        self.replies.append(text)
+
+
+class DummyCallback:
+    def __init__(self, data: str) -> None:
+        self.data = data
+        self.message = DummyCallbackMessage()
+        self.answers: list[str] = []
+
+    async def answer(self, text: str) -> None:
+        self.answers.append(text)
+
+
 class DummyTutorBot:
     def __init__(self, download_target: str) -> None:
         self.download_target = download_target
@@ -518,6 +542,44 @@ def test_tutor_pause_command_sets_degraded_mode(monkeypatch) -> None:
     assert "Причина инцидента: <b>maintenance</b>" in message.answers[0]
 
 
+def test_tutor_knowledge_suggestion_approve_callback(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state", knowledge_path="/tmp/knowledge")
+    callback = DummyCallback("know:approve:17")
+
+    async def fake_approve_suggestion(suggestion_id: int, settings_obj):
+        assert suggestion_id == 17
+        assert settings_obj is settings
+        return "approved/stoimost-zanyatiya.md"
+
+    monkeypatch.setattr(tutor, "approve_suggestion", fake_approve_suggestion)
+
+    asyncio.run(tutor.on_knowledge_suggestion_callback(callback, "tutor", settings))
+
+    assert callback.answers == ["Сохранено в базу знаний"]
+    assert callback.message.reply_markup_cleared is True
+    assert callback.message.replies == [
+        "Знание сохранено: <code>approved/stoimost-zanyatiya.md</code>"
+    ]
+
+
+def test_tutor_knowledge_suggestion_reject_callback(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state", knowledge_path="/tmp/knowledge")
+    callback = DummyCallback("know:reject:17")
+
+    async def fake_reject_suggestion(suggestion_id: int, settings_obj):
+        assert suggestion_id == 17
+        assert settings_obj is settings
+        return True
+
+    monkeypatch.setattr(tutor, "reject_suggestion", fake_reject_suggestion)
+
+    asyncio.run(tutor.on_knowledge_suggestion_callback(callback, "tutor", settings))
+
+    assert callback.answers == ["Не сохранено"]
+    assert callback.message.reply_markup_cleared is True
+    assert callback.message.replies == ["Предложение для базы знаний отклонено."]
+
+
 def test_tutor_panic_command_sets_frozen_mode(monkeypatch) -> None:
     settings = SimpleNamespace(state_path="/tmp/state")
     message = DummyMessage("/panic upstream outage")
@@ -890,9 +952,16 @@ def test_tutor_reply_routes_contact_only_escalation(monkeypatch) -> None:
     )
     message = DummyMessage(text="Ответ без брони", reply_to_message=reply_to_message)
     delivered: dict[str, object] = {}
+    captured: list[dict[str, object]] = []
 
     async def fake_find_pending_by_tutor_message(*args, **kwargs):
-        return {"booking_id": None, "contact_id": 7, "status": "pending", "escalation_id": 55}
+        return {
+            "booking_id": None,
+            "contact_id": 7,
+            "status": "pending",
+            "escalation_id": 55,
+            "question": "Можно задать общий вопрос?",
+        }
 
     async def fake_load_contact(*args, **kwargs):
         return {"id": 7, "telegram_user_id": 900}
@@ -925,6 +994,7 @@ def test_tutor_reply_routes_contact_only_escalation(monkeypatch) -> None:
     monkeypatch.setattr(tutor, "audit_log", fake_audit_log)
     monkeypatch.setattr(tutor.escalations, "resolve_by_id", fake_resolve_by_id)
     monkeypatch.setattr(tutor.registry, "get_student", lambda: object())
+    monkeypatch.setattr(tutor, "schedule_capture", lambda **kwargs: captured.append(kwargs))
 
     asyncio.run(tutor.on_tutor_reply(message, "tutor", settings))
 
@@ -932,6 +1002,17 @@ def test_tutor_reply_routes_contact_only_escalation(monkeypatch) -> None:
     assert delivered["contact_id"] == 7
     assert delivered["booking_id"] is None
     assert message.answers == [templates.tutor_answer_sent()]
+    assert captured == [
+        {
+            "settings": settings,
+            "source_kind": "escalation",
+            "booking_id": None,
+            "contact_id": 7,
+            "escalation_id": 55,
+            "source_question": "Можно задать общий вопрос?",
+            "final_answer": "Ответ без брони",
+        }
+    ]
 
 
 def test_tutor_photo_reply_routes_attachment_to_student(monkeypatch, tmp_path) -> None:

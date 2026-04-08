@@ -76,6 +76,8 @@ Why this matters:
 - approval cards now include inline approve/reject buttons
 - plain tutor reply to an approval card means “revise the draft and show me the next version”
 - tutor must use `/send ...` in a reply to an approval card when exact text should go to the student immediately
+- after a tutor-approved answer, Bridge may propose a reusable knowledge note in the tutor chat
+- that proposal is a pending suggestion only; static knowledge is updated only after the tutor explicitly confirms saving it
 - REST flow follows the same split:
   - `POST /api/approvals/{id}/approve` sends the current draft as-is
   - `POST /api/approvals/{id}/revise` rewrites the draft but keeps it pending
@@ -341,6 +343,8 @@ The main operational source of truth is now PostgreSQL.
   - runtime bridge logs are stored in `data/logs/bridge.log` with rotation
 - `data/knowledge`
   - mirrored knowledge base and Obsidian-compatible exports
+  - static knowledge files can be updated manually through `/api/tutor/knowledge/update`
+  - Bridge can also create pending knowledge suggestions from tutor-approved replies, but they are saved into static knowledge only after explicit tutor approval
 - `data/uploads`
   - persisted uploaded media used in student/tutor message flows
 - `data/openclaw`

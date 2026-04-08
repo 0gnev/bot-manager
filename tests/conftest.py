@@ -83,6 +83,7 @@ def db_clean(pg_pool):
                 TRUNCATE
                     idempotency_keys,
                     knowledge_updates,
+                    knowledge_suggestions,
                     attachments,
                     approvals,
                     escalations,

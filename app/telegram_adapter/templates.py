@@ -319,6 +319,41 @@ def tutor_notice(
     return "\n".join(lines)
 
 
+def knowledge_suggestion_notice(
+    suggestion: dict,
+    *,
+    booking: dict | None = None,
+    contact: dict | None = None,
+) -> str:
+    student_name = ((booking or {}).get("attendee") or {}).get("name") or (contact or {}).get("name") or "Студент"
+    lines = [
+        "<b>Предложение для базы знаний</b>",
+        f"<b>Заголовок:</b> {escape(suggestion.get('title') or '—')}",
+        f"<b>Источник:</b> {escape(suggestion.get('source_kind') or '—')}",
+        f"<b>Студент:</b> {escape(student_name)}",
+    ]
+    if suggestion.get("booking_id"):
+        lines.append(f"<b>ID брони:</b> <code>{escape(suggestion['booking_id'])}</code>")
+    elif suggestion.get("contact_id") is not None:
+        lines.append(f"<b>ID контакта:</b> <code>{suggestion['contact_id']}</code>")
+    if suggestion.get("source_question"):
+        lines.extend(["", "<b>Исходный вопрос:</b>", escape(suggestion["source_question"])])
+    lines.extend(["", "<b>Финальный ответ:</b>", escape(suggestion.get("answer_text") or "—")])
+    rationale = suggestion.get("rationale")
+    if rationale:
+        lines.extend(["", "<b>Почему стоит сохранить:</b>", escape(rationale)])
+    lines.extend(
+        [
+            "",
+            "<b>Черновик знания:</b>",
+            escape(suggestion.get("content_markdown") or "—"),
+            "",
+            "<i>Сохранить это как новое знание для будущих диалогов?</i>",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def tutor_answer_sent() -> str:
     return "Ответ отправлен студенту."
 

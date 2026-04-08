@@ -29,6 +29,7 @@ from bridge.bot.filters import TutorBotFilter
 from bridge.clients.openclaw import OpenclawClient
 from bridge.config import Settings
 from bridge.delivery import send_student_message
+from bridge.knowledge_learning import approve_suggestion, reject_suggestion, schedule_capture
 from bridge.state import (
     approvals,
     bookings,
@@ -376,6 +377,51 @@ async def on_approval_callback(
         await callback.answer("Неизвестное действие")
 
 
+@router.callback_query(TutorBotFilter(), F.data.startswith("know:"))
+async def on_knowledge_suggestion_callback(
+    callback: CallbackQuery, role: str, settings: Settings,
+) -> None:
+    if role != "tutor":
+        await callback.answer("Нет доступа")
+        return
+
+    parts = callback.data.split(":", 2)
+    if len(parts) != 3:
+        await callback.answer("Неверный формат")
+        return
+
+    _, action, suggestion_id_raw = parts
+    try:
+        suggestion_id = int(suggestion_id_raw)
+    except ValueError:
+        await callback.answer("Неверный идентификатор")
+        return
+
+    if action == "approve":
+        relative_path = await approve_suggestion(suggestion_id, settings)
+        if relative_path:
+            await callback.answer("Сохранено в базу знаний")
+            await callback.message.edit_reply_markup(reply_markup=None)
+            await callback.message.reply(
+                f"Знание сохранено: <code>{relative_path}</code>"
+            )
+        else:
+            await callback.answer("Не удалось сохранить (уже обработано?)")
+        return
+
+    if action == "reject":
+        ok = await reject_suggestion(suggestion_id, settings)
+        if ok:
+            await callback.answer("Не сохранено")
+            await callback.message.edit_reply_markup(reply_markup=None)
+            await callback.message.reply("Предложение для базы знаний отклонено.")
+        else:
+            await callback.answer("Не удалось отклонить (уже обработано?)")
+        return
+
+    await callback.answer("Неизвестное действие")
+
+
 # -- Tutor reply-to: approval edit or escalation response ----------------------
 
 @router.message(TutorBotFilter(), F.text, F.reply_to_message)
@@ -570,6 +616,16 @@ async def on_tutor_reply(message: Message, role: str, settings: Settings) -> Non
         assigned_human="tutor",
     )
     await message.answer(templates.tutor_answer_sent())
+    if escalation:
+        schedule_capture(
+            settings=settings,
+            source_kind="escalation",
+            booking_id=booking_id,
+            contact_id=contact_id,
+            escalation_id=escalation.get("escalation_id"),
+            source_question=escalation.get("question"),
+            final_answer=history_text,
+        )
     logger.info("Tutor reply routed: booking=%s -> student=%s", booking_id, student_id)
     await audit_log(
         "escalation", "resolved",

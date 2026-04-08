@@ -159,3 +159,121 @@ def test_revise_pending_approval_never_direct_sends_without_explicit_send(monkey
     assert result["decision"] == "revise"
     assert result["content"] == "Стоимость занятия — 3 рубля."
     assert calls["notice"]["chat_id"] == 77
+
+
+def test_approve_schedules_knowledge_capture(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    captured: list[dict[str, object]] = []
+
+    async def fake_get_approval(*args, **kwargs) -> dict:
+        return {
+            "approval_id": "appr-1",
+            "status": "pending",
+            "booking_id": "booking-1",
+            "contact_id": 9,
+            "student_chat_id": 123,
+            "student_question": "Сколько стоит занятие?",
+            "draft_content": "Стоимость занятия — 3000 рублей.",
+            "confidence": 0.8,
+        }
+
+    async def fake_send_student_message(**kwargs) -> bool:
+        return True
+
+    async def fake_resolve_approval(*args, **kwargs):
+        return {"approval_id": "appr-1", "status": "approved"}
+
+    async def fake_update_metadata(*args, **kwargs):
+        return None
+
+    async def fake_audit_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(approval_handler.approvals, "get_approval", fake_get_approval)
+    monkeypatch.setattr(approval_handler, "send_student_message", fake_send_student_message)
+    monkeypatch.setattr(approval_handler.approvals, "resolve_approval", fake_resolve_approval)
+    monkeypatch.setattr(approval_handler.conversations, "update_metadata", fake_update_metadata)
+    monkeypatch.setattr(approval_handler, "audit_log", fake_audit_log)
+    monkeypatch.setattr(approval_handler.registry, "get_student", lambda: object())
+    monkeypatch.setattr(
+        approval_handler,
+        "schedule_capture",
+        lambda **kwargs: captured.append(kwargs),
+    )
+
+    result = asyncio.run(approval_handler.approve("appr-1", settings))
+
+    assert result is True
+    assert captured == [
+        {
+            "settings": settings,
+            "source_kind": "approval",
+            "booking_id": "booking-1",
+            "contact_id": 9,
+            "approval_id": "appr-1",
+            "source_question": "Сколько стоит занятие?",
+            "final_answer": "Стоимость занятия — 3000 рублей.",
+        }
+    ]
+
+
+def test_edit_and_approve_schedules_knowledge_capture(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    captured: list[dict[str, object]] = []
+
+    async def fake_get_approval(*args, **kwargs) -> dict:
+        return {
+            "approval_id": "appr-1",
+            "status": "pending",
+            "booking_id": None,
+            "contact_id": 9,
+            "student_chat_id": 123,
+            "student_question": "Как проходит вводный урок?",
+            "draft_content": "Черновик",
+            "confidence": 0.8,
+        }
+
+    async def fake_send_student_message(**kwargs) -> bool:
+        return True
+
+    async def fake_resolve_approval(*args, **kwargs):
+        return {"approval_id": "appr-1", "status": "edited"}
+
+    async def fake_update_metadata(*args, **kwargs):
+        return None
+
+    async def fake_audit_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(approval_handler.approvals, "get_approval", fake_get_approval)
+    monkeypatch.setattr(approval_handler, "send_student_message", fake_send_student_message)
+    monkeypatch.setattr(approval_handler.approvals, "resolve_approval", fake_resolve_approval)
+    monkeypatch.setattr(approval_handler.conversations, "update_metadata", fake_update_metadata)
+    monkeypatch.setattr(approval_handler, "audit_log", fake_audit_log)
+    monkeypatch.setattr(approval_handler.registry, "get_student", lambda: object())
+    monkeypatch.setattr(
+        approval_handler,
+        "schedule_capture",
+        lambda **kwargs: captured.append(kwargs),
+    )
+
+    result = asyncio.run(
+        approval_handler.edit_and_approve(
+            "appr-1",
+            "Вводный урок проходит онлайн и включает разбор текущего уровня.",
+            settings,
+        )
+    )
+
+    assert result is True
+    assert captured == [
+        {
+            "settings": settings,
+            "source_kind": "approval",
+            "booking_id": None,
+            "contact_id": 9,
+            "approval_id": "appr-1",
+            "source_question": "Как проходит вводный урок?",
+            "final_answer": "Вводный урок проходит онлайн и включает разбор текущего уровня.",
+        }
+    ]

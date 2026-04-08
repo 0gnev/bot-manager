@@ -37,6 +37,7 @@ async def create_approval(
     *,
     contact_id: int | None = None,
     student_chat_id: int,
+    student_question: str | None = None,
     draft_content: str,
     action: str,
     confidence: float,
@@ -47,14 +48,15 @@ async def create_approval(
         """
         INSERT INTO approvals (
             approval_id, booking_id, contact_id, student_chat_id,
-            draft_content, action, confidence
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            student_question, draft_content, action, confidence
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *
         """,
         approval_id,
         booking_id,
         contact_id,
         student_chat_id,
+        student_question,
         draft_content,
         action,
         confidence,

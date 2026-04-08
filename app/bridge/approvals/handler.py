@@ -18,6 +18,7 @@ from bridge.bot import registry
 from bridge.clients.openclaw import OpenclawClient
 from bridge.config import Settings
 from bridge.delivery import send_student_message
+from bridge.knowledge_learning import schedule_capture
 from bridge.state import approvals, bookings, contacts, conversations
 from telegram_adapter import templates
 
@@ -95,6 +96,7 @@ async def submit_for_approval(
     *,
     contact_id: int,
     student_chat_id: int,
+    student_question: str | None,
     draft_content: str,
     action: str,
     confidence: float,
@@ -123,6 +125,7 @@ async def submit_for_approval(
         booking_id=booking_id,
         contact_id=contact_id,
         student_chat_id=student_chat_id,
+        student_question=student_question,
         draft_content=draft_content,
         action=action,
         confidence=confidence,
@@ -218,6 +221,16 @@ async def approve(approval_id: str, settings: Settings) -> bool:
         detail={"approval_id": approval_id},
     )
 
+    schedule_capture(
+        settings=settings,
+        source_kind="approval",
+        booking_id=data.get("booking_id"),
+        contact_id=data.get("contact_id"),
+        approval_id=approval_id,
+        source_question=data.get("student_question"),
+        final_answer=content,
+    )
+
     logger.info("Approval %s approved -> sent to student", approval_id)
     return True
 
@@ -303,6 +316,16 @@ async def edit_and_approve(
         booking_id=data["booking_id"],
         actor="tutor",
         detail={"approval_id": approval_id},
+    )
+
+    schedule_capture(
+        settings=settings,
+        source_kind="approval",
+        booking_id=data.get("booking_id"),
+        contact_id=data.get("contact_id"),
+        approval_id=approval_id,
+        source_question=data.get("student_question"),
+        final_answer=new_content,
     )
 
     logger.info("Approval %s edited & approved -> sent to student", approval_id)

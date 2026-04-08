@@ -17,6 +17,7 @@ from bridge.state import (
     conversations,
     deliveries,
     escalations,
+    knowledge_suggestions,
     load_controls,
     save_controls,
     save_operating_mode,
@@ -57,6 +58,7 @@ def test_approval_state_persists_review_metadata(db_clean) -> None:
             "",
             "booking-1",
             student_chat_id=123,
+            student_question="Сколько стоит занятие?",
             draft_content="Черновик",
             action="answer",
             confidence=0.6,
@@ -70,6 +72,7 @@ def test_approval_state_persists_review_metadata(db_clean) -> None:
         )
 
         assert created["status"] == "pending"
+        assert created["student_question"] == "Сколько стоит занятие?"
         assert resolved["status"] == "approved"
         assert resolved["reviewer"] == "tutor"
         assert resolved["review_channel"] == "api"
@@ -91,6 +94,7 @@ def test_contact_only_approval_state_persists_contact_scope(db_clean) -> None:
             None,
             contact_id=contact["id"],
             student_chat_id=555,
+            student_question="Можно ли задать общий вопрос?",
             draft_content="Черновик без записи",
             action="answer",
             confidence=0.55,
@@ -113,6 +117,7 @@ def test_pending_approval_draft_can_be_revised_in_place(db_clean) -> None:
             "",
             "booking-approval-revise",
             student_chat_id=123,
+            student_question="Как проходит занятие?",
             draft_content="Старый черновик",
             action="answer",
             confidence=0.6,
@@ -128,6 +133,44 @@ def test_pending_approval_draft_can_be_revised_in_place(db_clean) -> None:
         assert updated["draft_content"] == "Новый черновик"
         assert updated["tutor_message_id"] == 456
         assert updated["status"] == "pending"
+
+    run_async(_run())
+
+
+def test_knowledge_suggestion_state_persists_and_resolves(db_clean) -> None:
+    async def _run():
+        await _create_booking("booking-knowledge")
+        booking = await bookings.load("", "booking-knowledge")
+
+        created = await knowledge_suggestions.create(
+            "",
+            source_kind="escalation",
+            booking_id="booking-knowledge",
+            contact_id=booking["contact_id"],
+            source_question="Сколько стоит занятие?",
+            answer_text="Стоимость занятия — 3000 рублей.",
+            title="Стоимость занятия",
+            rationale="Это стабильная FAQ-информация о цене.",
+            content_markdown="# Стоимость занятия\n\nСтоимость занятия — 3000 рублей.",
+            suggested_file_path="approved/stoimost-zanyatiya.md",
+        )
+        await knowledge_suggestions.set_tutor_message_id("", int(created["id"]), 777)
+        resolved = await knowledge_suggestions.resolve(
+            "",
+            int(created["id"]),
+            status="saved",
+            resolved_by="tutor",
+            knowledge_file_path="approved/stoimost-zanyatiya.md",
+        )
+        pending = await knowledge_suggestions.list_pending("")
+
+        assert created["status"] == "pending"
+        assert created["title"] == "Стоимость занятия"
+        assert created["source_question"] == "Сколько стоит занятие?"
+        assert resolved["status"] == "saved"
+        assert resolved["knowledge_file_path"] == "approved/stoimost-zanyatiya.md"
+        assert resolved["resolved_by"] == "tutor"
+        assert pending == []
 
     run_async(_run())
 

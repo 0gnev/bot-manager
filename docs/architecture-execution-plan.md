@@ -14,6 +14,7 @@ Source of truth: the compact architecture prompt provided for Bot Manager.
 - [x] Add contact-scoped tutor control endpoints for mode and automation management.
 - [x] Make tutor replies to approval cards revise drafts by default, with explicit `/send` for immediate direct delivery.
 - [x] Add latency instrumentation around OpenClaw calls so slow approval / answer paths are visible in audit logs.
+- [x] Add tutor-approved knowledge suggestion flow so reusable answers can be promoted into static knowledge without auto-saving private one-off cases.
 
 ## Next priority tasks
 

@@ -142,6 +142,7 @@ def test_tutor_reply_supports_contact_only_escalation(monkeypatch) -> None:
     body = tutor_api.ReplyRequest(escalation_id=33, text="Ответ по общему вопросу")
     delivered: dict[str, object] = {}
     metadata_updates: list[dict] = []
+    captured: list[dict[str, object]] = []
 
     async def fake_load_by_id(*args, **kwargs) -> dict:
         return {
@@ -149,6 +150,7 @@ def test_tutor_reply_supports_contact_only_escalation(monkeypatch) -> None:
             "contact_id": 91,
             "status": "pending",
             "escalation_id": 33,
+            "question": "Можно ли задать общий вопрос?",
         }
 
     async def fake_load_contact(*args, **kwargs) -> dict:
@@ -180,6 +182,7 @@ def test_tutor_reply_supports_contact_only_escalation(monkeypatch) -> None:
     monkeypatch.setattr(tutor_api, "audit_log", fake_audit_log)
     monkeypatch.setattr(tutor_api.registry, "get_student", lambda: object())
     monkeypatch.setattr(tutor_api.registry, "get_owner", lambda: None)
+    monkeypatch.setattr(tutor_api, "schedule_capture", lambda **kwargs: captured.append(kwargs))
 
     response = asyncio.run(tutor_api.tutor_reply(body, settings))
 
@@ -190,6 +193,17 @@ def test_tutor_reply_supports_contact_only_escalation(monkeypatch) -> None:
     assert metadata_updates
     assert metadata_updates[0]["contact_id"] == 91
     assert "automation_enabled" not in metadata_updates[0]
+    assert captured == [
+        {
+            "settings": settings,
+            "source_kind": "escalation",
+            "booking_id": None,
+            "contact_id": 91,
+            "escalation_id": 33,
+            "source_question": "Можно ли задать общий вопрос?",
+            "final_answer": "Ответ по общему вопросу",
+        }
+    ]
 
 
 def test_list_escalations_parses_relevant_history_json(monkeypatch) -> None:

@@ -24,6 +24,7 @@ from bridge.bot import registry
 from bridge.config import Settings, get_settings
 from bridge.db import get_pool
 from bridge.delivery import send_student_message
+from bridge.knowledge_learning import schedule_capture
 from bridge.state import (
     approvals,
     bookings,
@@ -390,6 +391,16 @@ async def tutor_reply(
             "student_notified": student_notified,
             "escalation_id": esc["escalation_id"],
         },
+    )
+
+    schedule_capture(
+        settings=settings,
+        source_kind="escalation",
+        booking_id=booking_id,
+        contact_id=contact_id,
+        escalation_id=esc["escalation_id"],
+        source_question=esc.get("question"),
+        final_answer=body.text,
     )
 
     # Notify tutor in Telegram that reply was delivered
