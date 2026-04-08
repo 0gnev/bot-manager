@@ -45,6 +45,11 @@ service. `CD` no longer re-runs the full test suite on the production server,
 because the PostgreSQL-backed tests require separate test infrastructure and were
 causing deploys to fail before container recreation.
 
+If the production server is intentionally powered off, `CD` will fail until the
+server is reachable again. In that case either avoid merges to `main` during the
+downtime or temporarily disable the `CD` workflow. Full shutdown/restart/restore
+steps are documented in [production-operations.md](/private/var/www/bot-manager/docs/production-operations.md).
+
 ## Live LLM smoke workflow
 
 `Live LLM Smoke` is intentionally separate from `CI`.

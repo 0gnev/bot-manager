@@ -33,6 +33,7 @@ task test-system
 Primary docs:
 
 - GitHub Actions / deploy: [docs/github-actions.md](/private/var/www/bot-manager/docs/github-actions.md)
+- production shutdown / restart / restore runbook: [docs/production-operations.md](/private/var/www/bot-manager/docs/production-operations.md)
 - local and remote test workflow: [docs/system-testing.md](/private/var/www/bot-manager/docs/system-testing.md)
 - local development: [docs/local-dev.md](/private/var/www/bot-manager/docs/local-dev.md)
 - PostgreSQL migration / first-rollout backup+rollback: [docs/postgresql-migration-task.md](/private/var/www/bot-manager/docs/postgresql-migration-task.md)

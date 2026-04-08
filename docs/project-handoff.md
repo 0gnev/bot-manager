@@ -184,6 +184,7 @@ Relevant files:
 - [scripts/deploy-server.sh](/private/var/www/bot-manager/scripts/deploy-server.sh)
 - [.github/workflows/cd.yml](/private/var/www/bot-manager/.github/workflows/cd.yml)
 - [docs/github-actions.md](/private/var/www/bot-manager/docs/github-actions.md)
+- [docs/production-operations.md](/private/var/www/bot-manager/docs/production-operations.md)
 
 `pytest` remains part of `CI`, not `CD`. This matters after the PostgreSQL
 migration because the state-backed tests require a dedicated test database.
@@ -350,6 +351,10 @@ The main operational source of truth is now PostgreSQL.
 
 If you move environments or restore from backup, back up both the PostgreSQL
 data and the operational folders under `data/`.
+
+For normal production shutdown / restart / restore steps, use:
+
+- [docs/production-operations.md](/private/var/www/bot-manager/docs/production-operations.md)
 
 ### First-rollout legacy state automation
 
