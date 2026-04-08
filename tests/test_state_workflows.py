@@ -362,6 +362,51 @@ def test_booking_find_by_username(db_clean) -> None:
     run_async(_run())
 
 
+def test_booking_save_inherits_linked_contact_telegram_user(db_clean) -> None:
+    async def _run():
+        await _create_booking("booking-linked-a")
+        await bookings.link_telegram_user("", "booking-linked-a", 12345)
+        await _create_booking("booking-linked-b")
+
+        found = await bookings.load("", "booking-linked-b")
+        assert found is not None
+        assert found["telegram_user_id"] == 12345
+
+    run_async(_run())
+
+
+def test_attach_telegram_identity_merges_existing_user_contact(db_clean) -> None:
+    async def _run():
+        standalone = await contacts.ensure_telegram_contact(
+            "",
+            888,
+            telegram_username="standalone_student",
+            name="Standalone Student",
+        )
+        await _create_booking("booking-merge-contact")
+        booking = await bookings.load("", "booking-merge-contact")
+        assert booking is not None
+        source_contact_id = booking["contact_id"]
+        assert source_contact_id is not None
+        assert source_contact_id != standalone["id"]
+
+        merged = await contacts.attach_telegram_identity(
+            "",
+            source_contact_id,
+            telegram_user_id=888,
+            telegram_username="teststudent",
+            name="Merged Student",
+        )
+
+        assert merged is not None
+        assert merged["id"] == standalone["id"]
+        merged_booking = await bookings.load("", "booking-merge-contact")
+        assert merged_booking is not None
+        assert merged_booking["contact_id"] == standalone["id"]
+
+    run_async(_run())
+
+
 # ── conversation tests ───────────────────────────────────────────────────────
 
 

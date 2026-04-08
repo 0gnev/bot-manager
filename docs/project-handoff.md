@@ -470,7 +470,7 @@ Relevant test files:
 
 These are not forgotten bugs; they are still-open follow-up tasks.
 
-- booking linking should be hardened further
+- booking linking now relies on exact Planerka Telegram username matching plus existing telegram_user_id bindings; signed claim/deeplink tokens are intentionally deferred until there is a reliable delivery channel
 - emergency-stop/admin surface can be stronger
 - the PostgreSQL migration is functionally complete, but first-rollout
   backup/import/rollback runbooks should be kept explicit for older

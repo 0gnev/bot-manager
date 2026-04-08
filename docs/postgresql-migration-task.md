@@ -38,7 +38,7 @@ serving as the first production-grade storage layer.
 ## Remaining follow-ups
 
 - [ ] Keep first-rollout backup/import/rollback runbooks explicit for older environments that still carry legacy `data/state/`.
-- [ ] Tighten student-booking linking to a stronger deeplink or signed-token flow instead of username fallback.
+- [x] Harden student-booking linking around exact Planerka Telegram username matching and guarded deeplink fallback.
 - [ ] Decide whether separate `contact_channels` and `deliveries` tables are still needed or whether the current denormalized design is sufficient.
 - [ ] Add optional follow-up tables such as `conversation_snapshots` and `escalation_events` only if operationally justified.
 

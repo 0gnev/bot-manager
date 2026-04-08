@@ -48,6 +48,27 @@ async def load_by_telegram_username(state_path: str, telegram_username: str) -> 
     return _row_to_dict(row)
 
 
+async def find_all_with_active_bookings_by_telegram_username(
+    state_path: str,
+    telegram_username: str,
+) -> list[dict]:
+    normalized = (telegram_username or "").lstrip("@")
+    if not normalized:
+        return []
+    rows = await get_pool().fetch(
+        """
+        SELECT DISTINCT c.*
+        FROM contacts c
+        JOIN bookings b ON b.contact_id = c.id
+        WHERE b.status = 'active'
+          AND lower(c.telegram_username) = lower($1)
+        ORDER BY c.updated_at DESC, c.id DESC
+        """,
+        normalized,
+    )
+    return [_row_to_dict(row) for row in rows]
+
+
 async def search_dialog_targets(
     state_path: str,
     query: str,
@@ -103,15 +124,6 @@ async def ensure_telegram_contact(
                 "SELECT * FROM contacts WHERE telegram_user_id = $1",
                 telegram_user_id,
             )
-            if row is None and normalized_username:
-                row = await conn.fetchrow(
-                    """
-                    SELECT * FROM contacts
-                    WHERE lower(telegram_username) = lower($1)
-                    LIMIT 1
-                    """,
-                    normalized_username,
-                )
 
             if row is None:
                 row = await conn.fetchrow(
@@ -141,6 +153,88 @@ async def ensure_telegram_contact(
                 normalized_username,
                 name,
             )
+            return _row_to_dict(row)
+
+
+async def attach_telegram_identity(
+    state_path: str,
+    contact_id: int,
+    *,
+    telegram_user_id: int,
+    telegram_username: str | None = None,
+    name: str | None = None,
+) -> dict | None:
+    normalized_username = (telegram_username or "").lstrip("@") or None
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            target = await conn.fetchrow(
+                "SELECT * FROM contacts WHERE id = $1 FOR UPDATE",
+                contact_id,
+            )
+            if target is None:
+                return None
+
+            keeper = await conn.fetchrow(
+                "SELECT * FROM contacts WHERE telegram_user_id = $1 FOR UPDATE",
+                telegram_user_id,
+            )
+            if keeper is not None and keeper["id"] != contact_id:
+                keeper_id = keeper["id"]
+                await conn.execute(
+                    "UPDATE bookings SET contact_id = $1 WHERE contact_id = $2",
+                    keeper_id,
+                    contact_id,
+                )
+                for table_name in ("messages", "attachments", "escalations", "approvals"):
+                    await conn.execute(
+                        f"UPDATE {table_name} SET contact_id = $1 WHERE contact_id = $2",
+                        keeper_id,
+                        contact_id,
+                    )
+                row = await conn.fetchrow(
+                    """
+                    UPDATE contacts
+                    SET telegram_username = COALESCE($2, telegram_username, $3),
+                        name = COALESCE(name, $4, $5),
+                        email = COALESCE(email, $6),
+                        phone = COALESCE(phone, $7),
+                        time_zone = COALESCE(time_zone, $8),
+                        active_booking_id = COALESCE(active_booking_id, $9),
+                        updated_at = now()
+                    WHERE id = $1
+                    RETURNING *
+                    """,
+                    keeper_id,
+                    normalized_username,
+                    target["telegram_username"],
+                    name,
+                    target["name"],
+                        target["email"],
+                        target["phone"],
+                        target["time_zone"],
+                        target["active_booking_id"],
+                    )
+                await conn.execute("DELETE FROM contacts WHERE id = $1", contact_id)
+                return _row_to_dict(row) if row is not None else None
+
+            row = await conn.fetchrow(
+                """
+                UPDATE contacts
+                SET telegram_user_id = COALESCE($2, telegram_user_id),
+                    telegram_username = COALESCE($3, telegram_username),
+                    name = COALESCE($4, name),
+                    updated_at = now()
+                WHERE id = $1
+                RETURNING *
+                """,
+                contact_id,
+                telegram_user_id,
+                normalized_username,
+                name,
+            )
+            if row is None:
+                return None
             return _row_to_dict(row)
 
 

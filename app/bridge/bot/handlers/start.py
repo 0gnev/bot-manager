@@ -36,36 +36,58 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
     booking: dict | None = None
 
     if args:
-        # Deeplink with booking ID
         booking_id = parse_start_payload(args)
         booking = await bookings.load(settings.state_path, booking_id)
         if booking is None:
             logger.warning("Unknown booking_id from deeplink: %s", booking_id)
             await message.answer(templates.booking_not_found())
             return
-    else:
-        # No deeplink — try matching by Telegram username
-        username = message.from_user.username
-        if username:
-            username_matches = await bookings.find_all_by_telegram_username(
-                settings.state_path, username
+        if not await _can_link_booking_for_student(message, settings, booking):
+            logger.warning(
+                "Rejected booking link attempt: booking=%s user_id=%s username=%s",
+                booking_id,
+                message.from_user.id,
+                message.from_user.username,
             )
-            if len(username_matches) > 1:
-                await message.answer(_multiple_bookings_notice(username_matches))
-                return
-            booking = username_matches[0] if username_matches else None
+            await message.answer(templates.booking_not_found())
+            return
+    else:
+        booking = await bookings.find_by_telegram_user(
+            settings.state_path, message.from_user.id
+        )
         if booking is None:
-            # Also check if already linked by user ID
-            booking = await bookings.find_by_telegram_user(
+            linked_bookings = await bookings.find_all_by_telegram_user(
                 settings.state_path, message.from_user.id
             )
-            if booking is None:
-                linked_bookings = await bookings.find_all_by_telegram_user(
-                    settings.state_path, message.from_user.id
-                )
-                if linked_bookings:
-                    await message.answer(_multiple_bookings_notice(linked_bookings))
+            if linked_bookings:
+                await message.answer(_multiple_bookings_notice(linked_bookings))
+                return
+        if booking is None:
+            username = _normalized_username(message.from_user.username)
+            if username:
+                candidates = [
+                    item for item in await contacts.find_all_with_active_bookings_by_telegram_username(
+                        settings.state_path,
+                        username,
+                    )
+                    if item.get("telegram_user_id") in (None, message.from_user.id)
+                ]
+                if len(candidates) > 1:
+                    await message.answer(templates.booking_link_ambiguous())
                     return
+                if len(candidates) == 1:
+                    contact = await contacts.attach_telegram_identity(
+                        settings.state_path,
+                        candidates[0]["id"],
+                        telegram_user_id=message.from_user.id,
+                        telegram_username=message.from_user.username,
+                        name=message.from_user.full_name,
+                    )
+                    if contact is not None:
+                        booking = await bookings.resolve_context_for_contact(
+                            settings.state_path,
+                            contact["id"],
+                        )
         if booking is None:
             await contacts.ensure_telegram_contact(
                 settings.state_path,
@@ -73,10 +95,14 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
                 telegram_username=message.from_user.username,
                 name=message.from_user.full_name,
             )
-            await message.answer("Привет! Чем могу помочь?")
+            await message.answer(templates.contact_only_welcome())
             return
 
     booking_id = booking["booking_id"]
+
+    if booking.get("telegram_user_id") not in (None, message.from_user.id):
+        await message.answer(templates.booking_linked_elsewhere())
+        return
 
     if booking.get("telegram_user_id") == message.from_user.id:
         booking = await bookings.link_telegram_user(
@@ -152,6 +178,42 @@ async def cmd_start(message: Message, role: str, settings: Settings) -> None:
 
 def _parse_dt(value: str | None):
     return parse_datetime(value)
+
+
+def _normalized_username(value: str | None) -> str | None:
+    normalized = (value or "").lstrip("@").strip().lower()
+    return normalized or None
+
+
+async def _can_link_booking_for_student(
+    message: Message,
+    settings: Settings,
+    booking: dict,
+) -> bool:
+    user_id = message.from_user.id
+    if booking.get("telegram_user_id") == user_id:
+        return True
+    if booking.get("telegram_user_id") not in (None, user_id):
+        return False
+
+    contact = (
+        await contacts.load(settings.state_path, booking["contact_id"])
+        if booking.get("contact_id") is not None
+        else None
+    )
+    contact_user_id = (contact or {}).get("telegram_user_id")
+    if contact_user_id == user_id:
+        return True
+    if contact_user_id not in (None, user_id):
+        return False
+
+    recorded_username = _normalized_username(
+        (contact or {}).get("telegram_username")
+        or ((booking.get("attendee") or {}).get("telegram"))
+    )
+    return recorded_username is not None and recorded_username == _normalized_username(
+        message.from_user.username
+    )
 
 
 def _multiple_bookings_notice(bookings_list: list[dict]) -> str:
