@@ -37,7 +37,7 @@ serving as the first production-grade storage layer.
 
 ## Remaining follow-ups
 
-- [ ] Keep first-rollout backup/import/rollback runbooks explicit for older environments that still carry legacy `data/state/`.
+- [x] Keep first-rollout backup/import/rollback runbooks explicit for older environments that still carry legacy `data/state/`.
 - [x] Harden student-booking linking around exact Planerka Telegram username matching and guarded deeplink fallback.
 - [ ] Decide whether separate `contact_channels` and `deliveries` tables are still needed or whether the current denormalized design is sufficient.
 - [ ] Add optional follow-up tables such as `conversation_snapshots` and `escalation_events` only if operationally justified.
@@ -144,8 +144,8 @@ Testing expectations:
 
 - [x] Production deployment brings PostgreSQL up through Docker Compose or can point to an external DB via `DATABASE_URL`.
 - [x] DB migrations run automatically during `bridge` startup in deployment.
-- [ ] Back up current `data/state/` before migration/import in any first-rollout legacy environment.
-- [ ] Import existing runtime state into PostgreSQL on first rollout for any remaining legacy environment.
+- [x] Back up current `data/state/` before migration/import in any first-rollout legacy environment.
+- [x] Import existing runtime state into PostgreSQL on first rollout for any remaining legacy environment.
 - [x] Bridge health, Telegram polling, tutor reply routing, and webhook handling are part of the documented post-deploy checks.
 
 ## Acceptance Criteria
@@ -157,21 +157,53 @@ Testing expectations:
 - [x] Tutor replies continue to reach the student and resolve the right escalation.
 - [x] CI runs the PostgreSQL-backed test suite successfully.
 - [x] Production deployment instructions are updated.
-- [ ] First-rollout legacy-environment validation should remain explicit in operational runbooks.
+- [x] First-rollout legacy-environment validation should remain explicit in operational runbooks.
 
 ## Rollout Plan
 
 1. Keep the current PostgreSQL schema and migration chain as the source of truth.
 2. Preserve CI coverage against PostgreSQL on Python 3.12.
-3. For any legacy environment, back up `data/state/` before first rollout.
-4. Import legacy JSON state only where it still exists and matters.
-5. Deploy bridge with PostgreSQL enabled and let startup migrations run.
-6. Run smoke checks for booking linking, student Q&A, escalation, and tutor reply routing.
+3. For any legacy environment, run:
+
+   ```bash
+   task pg-first-rollout
+   ```
+
+   This does all of the following in order:
+   - backs up legacy `data/state/` into `data/backups/postgres-first-rollout/<timestamp>/legacy-state.tar.gz`
+   - starts `postgres` and waits for readiness
+   - creates a PostgreSQL custom-format dump before any import
+   - imports legacy JSON state into PostgreSQL in `auto` mode only when runtime tables are still empty
+   - recreates the full stack and waits for `bridge` health
+   - writes `manifest.env` with the backup paths needed for rollback
+
+4. Run smoke checks for booking linking, student Q&A, escalation, and tutor reply routing.
+
+Useful rollout switches:
+
+```bash
+IMPORT_LEGACY_STATE=always task pg-first-rollout
+IMPORT_LEGACY_STATE=never task pg-first-rollout
+```
 
 ## Rollback Plan
 
 - Keep the JSON state backup until any legacy-environment PostgreSQL rollout is verified.
-- If a first-rollout migration fails, stop the new bridge version, restore the previous bridge image/config, and re-run from the preserved backup.
+- If a first-rollout rollout fails, restore from the backup manifest created by `task pg-first-rollout`:
+
+  ```bash
+  BACKUP_DIR=data/backups/postgres-first-rollout/<timestamp> task pg-rollback
+  ```
+
+  If `BACKUP_DIR` is omitted, the latest backup directory is used.
+
+- The rollback flow:
+  - starts `postgres`
+  - stops `bridge`
+  - restores the PostgreSQL custom dump with `pg_restore --clean --if-exists`
+  - restores the legacy `data/state/` archive if one was captured
+  - recreates the stack and waits for bridge health
+
 - Do not delete `data/state/` during the first PostgreSQL rollout in environments that still rely on it for import.
 
 ## Related Files

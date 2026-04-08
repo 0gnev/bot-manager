@@ -95,6 +95,16 @@ tasks:
     cmds:
       - bash scripts/system-test-remote.sh
 
+  pg-first-rollout:
+    desc: Backup legacy JSON state, backup PostgreSQL, optionally import legacy state, and recreate the stack
+    cmds:
+      - bash scripts/postgres-first-rollout.sh
+
+  pg-rollback:
+    desc: Restore PostgreSQL and legacy JSON state from the latest or selected first-rollout backup
+    cmds:
+      - bash scripts/postgres-rollback.sh
+
   clean:
     desc: Remove recreatable local runtime data
     cmds:
