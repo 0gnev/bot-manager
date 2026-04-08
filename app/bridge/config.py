@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # Student bot — open to all users, polled by Bridge
     telegram_bot_token_student: str
     # Owner bot — restricted to whitelist (TUTOR_CHAT_ID only).
-    # Polled by OpenClaw; Bridge uses it only for sending escalation notices.
+    # Polled by Bridge for tutor/operator actions.
     telegram_bot_token_owner: str = ""
     telegram_mode: str = "polling"  # polling | webhook (webhook for production)
     telegram_api_base_url: str = ""
