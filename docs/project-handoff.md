@@ -37,6 +37,7 @@ The intended architecture is:
 
 - `bridge`: the main Bot Manager service
 - `openclaw`: AI gateway used by Bridge
+- `postgres`: operational state store used by Bridge at runtime
 
 ### Conversation ownership model
 
@@ -116,6 +117,7 @@ Important variables:
 - `PLANERKA_WEBHOOK_SECRET`
 - `GATEWAY_AUTH_TOKEN`
 - `TUTOR_API_TOKEN`
+- `DATABASE_URL`
 - `OBSIDIAN_SOURCE_PATH`
 - `KNOWLEDGE_MIRROR_PATH`
 - `AUDIT_PATH`
@@ -165,8 +167,10 @@ That script:
 2. fetches refs and checks out the requested branch
 3. pulls `main`
 4. runs `docker compose --env-file .env up -d --build --force-recreate`
-5. waits for `bridge` to become healthy on `http://127.0.0.1:8081/health`
-6. prints recent `bridge` logs and fails if startup never becomes healthy
+5. starts `postgres`, `openclaw`, and `bridge` with the new code/config
+6. lets `bridge` apply any pending PostgreSQL migrations during startup
+7. waits for `bridge` to become healthy on `http://127.0.0.1:8081/health`
+8. prints recent `bridge` logs and fails if startup never becomes healthy
 
 Relevant files:
 
@@ -300,41 +304,45 @@ That means more than one process is polling the same bot token.
 
 ### Current known limitation
 
-Escalation state is currently stored by `booking_id`, not by a separate
-`escalation_id`.
+Escalations are now stored as separate PostgreSQL records with their own
+`escalation_id`, and tutor/API replies can resolve the exact record.
 
-That means only the latest pending escalation for a booking remains active.
-Older tutor cards can effectively become stale if newer blocked student messages
-overwrite the escalation file.
+The remaining operational limitation is narrower:
 
-This is a known architectural limitation and should eventually be refactored.
+- booking-level reply flows are only unambiguous when there is exactly one
+  pending escalation for that booking
+- if multiple pending escalations exist and the exact tutor card / message link
+  is lost, the operator must reply to the correct card or use the explicit
+  `escalation_id`
+- legacy fallback flows that infer context from `booking_id` are still kept for
+  backward compatibility during rollout
 
-## 10. State and data directories
+## 10. State, database, and data directories
 
-The system keeps important runtime data under `data/`.
+The main operational source of truth is now PostgreSQL.
 
-Important folders:
+`data/` still matters, but not all folders there are equal:
 
-- `data/state/bookings`
-- `data/state/conversations`
-- `data/state/escalations`
+- `postgres` Docker volume / external PostgreSQL host
+  - this is where operational state lives at runtime:
+    contacts, bookings, messages, attachments, approvals, escalations,
+    runtime controls, idempotency keys
 - `data/audit`
+  - audit trail is stored in `data/audit/audit.jsonl`
 - `data/logs`
+  - runtime bridge logs are stored in `data/logs/bridge.log` with rotation
 - `data/knowledge`
+  - mirrored knowledge base and Obsidian-compatible exports
 - `data/uploads`
+  - persisted uploaded media used in student/tutor message flows
 - `data/openclaw`
+  - OpenClaw runtime state and persisted config
+- `data/state`
+  - legacy JSON state kept for migration/import, backup, or older environment
+    restores; it is no longer the primary runtime storage layer
 
-Operational meaning:
-
-- booking payloads live in `data/state/bookings`
-- conversation state lives in `data/state/conversations`
-- pending human escalations live in `data/state/escalations`
-- audit trail is stored in `data/audit/audit.jsonl`
-- runtime bridge logs are stored in `data/logs/bridge.log` with rotation
-- OpenClaw runtime state lives in `data/openclaw`
-
-If you move environments or restore from backup, do not forget that `data/`
-contains real runtime state, not just cache.
+If you move environments or restore from backup, back up both the PostgreSQL
+data and the operational folders under `data/`.
 
 ## 11. Fast operational checks after deployment
 
@@ -347,6 +355,7 @@ docker compose --env-file .env logs -f --since=2m bridge
 
 Expected:
 
+- `postgres` healthy
 - `bridge` healthy
 - `openclaw` healthy
 - Bridge logs show polling for both bots
@@ -370,7 +379,8 @@ Bridge runtime logs can be read in three ways:
 ### Files to inspect during debugging
 
 ```bash
-cat data/state/escalations/<booking_id>.json
+docker compose --env-file .env exec -T postgres psql -U bridge -d bridge -c \
+  "SELECT id, booking_id, contact_id, status, tutor_message_id, created_at FROM escalations ORDER BY created_at DESC LIMIT 20;"
 grep -RIn "<booking_id>" data/audit | tail -n 30
 docker compose --env-file .env logs --since=2m bridge
 ```
@@ -381,9 +391,10 @@ docker compose --env-file .env logs --since=2m bridge
 
 Check:
 
-- was the reply sent to the latest escalation card?
-- does `data/state/escalations/<booking_id>.json` contain the expected question?
-- does the booking contain `telegram_user_id`?
+- was the reply sent to the correct escalation card?
+- if there are multiple pending escalations, was the exact card / `escalation_id`
+  used?
+- do the booking or contact rows contain `telegram_user_id`?
 - do Bridge logs show tutor-reply routing logs?
 
 ### If deploy succeeds but behavior does not change
@@ -419,17 +430,32 @@ Current tests cover:
 - state workflows
 - tutor API behavior
 - OpenClaw client behavior
+- import from legacy JSON state
+- end-to-end system message flow in the Docker harness
 
 Runtime resiliency now includes bounded retries:
 
 - outbound student-facing Telegram delivery retries before marking delivery failed
 - OpenClaw gateway calls retry on transport failures and retryable HTTP statuses
 
-Run locally or on the server with:
+Preferred local run path:
 
 ```bash
-python -m pytest
+task test
 ```
+
+Direct equivalent:
+
+```bash
+bash scripts/run-pytest-in-docker.sh
+```
+
+Why this matters:
+
+- the intended local test environment is Python 3.12 inside Docker
+- CI uses Python 3.12 with a PostgreSQL service
+- relying on the host Python interpreter is no longer recommended unless it
+  matches the intended runtime/test environment
 
 Relevant test files:
 
@@ -444,14 +470,15 @@ Relevant test files:
 
 These are not forgotten bugs; they are still-open follow-up tasks.
 
-- no dedicated `contacts` entity yet
-- message storage is still thinner than the target architecture
-- escalation packages should be richer
-- tutor-facing conversation review UI is still minimal
 - booking linking should be hardened further
-- retry/backoff around outbound delivery should improve
 - emergency-stop/admin surface can be stronger
-- escalation storage should become multi-record rather than one file per booking
+- the PostgreSQL migration is functionally complete, but first-rollout
+  backup/import/rollback runbooks should be kept explicit for older
+  environments
+- the target data model can still be normalized further if needed, for example
+  by separating `contact_channels` and `deliveries` into dedicated tables
+- `uvicorn` / websocket dependency warnings in system tests should still be
+  cleaned up
 
 Reference:
 

@@ -1,69 +1,72 @@
-# PostgreSQL Migration Task
+# PostgreSQL Migration Status
 
-## Goal
+## Current status
 
-Replace the current JSON-file state storage with PostgreSQL-backed persistence
-that supports:
+The core migration from JSON-file runtime state to PostgreSQL is complete.
 
-- many students in parallel
-- multiple active bookings per student
-- multiple open escalations per booking
-- durable message history and reply routing
-- safe production deployment with backup, migration, and rollback steps
+Bridge now uses PostgreSQL as the operational source of truth for:
 
-This task should also introduce the automated test coverage and deployment
-changes required to operate the new storage model in production.
+- contacts
+- bookings
+- messages
+- attachments
+- escalations
+- approvals
+- runtime controls
+- idempotency keys
 
-## Why This Task Exists
+Legacy JSON files under `data/state/` still matter for:
 
-The current architecture stores state in local JSON files under `data/state/`.
-That implementation is good enough for a bootstrap phase, but it has hard
-limits:
+- one-shot imports from older environments
+- backup/restore during first-rollout migrations
+- preserving historical pre-PostgreSQL state when needed
 
-- booking lookup is effectively one-result-per-Telegram-user
-- escalation state is one-record-per-booking instead of many records
-- message history is too thin for reliable workflow reconstruction
-- file-backed state makes multi-step updates and concurrent workflows brittle
+## Completed scope
 
-## Scope
+- [x] Introduce PostgreSQL as the source of truth for operational state.
+- [x] Add schema migrations and a repeatable migration runner.
+- [x] Replace file-backed repositories for active runtime state with DB-backed repositories.
+- [x] Preserve current business behavior while removing the single-escalation and single-booking bottlenecks.
+- [x] Add automated tests for repositories, migrations, and critical workflows.
+- [x] Update local/dev and production deployment to provision and run PostgreSQL.
+- [x] Add a safe migration/import path from existing `data/state/` JSON files.
 
-This task includes:
+This migration still does **not** require Redis. Redis may be evaluated later
+for cache, TTL/idempotency, or queue optimizations, but PostgreSQL is already
+serving as the first production-grade storage layer.
 
-1. Introduce PostgreSQL as the source of truth for operational state.
-2. Add schema migrations and a repeatable migration runner.
-3. Replace file-backed repositories for active runtime state with DB-backed
-   repositories.
-4. Preserve current business behavior while removing the single-escalation and
-   single-booking bottlenecks.
-5. Add automated tests for repositories, migrations, and critical workflows.
-6. Update local/dev and production deployment to provision and run PostgreSQL.
-7. Add a safe migration/import path from existing `data/state/` JSON files.
+## Remaining follow-ups
 
-This task does **not** require Redis. Redis may be evaluated later for cache,
-TTL/idempotency, or queue optimizations, but PostgreSQL should be sufficient for
-the first production-grade storage layer.
+- [ ] Keep first-rollout backup/import/rollback runbooks explicit for older environments that still carry legacy `data/state/`.
+- [ ] Tighten student-booking linking to a stronger deeplink or signed-token flow instead of username fallback.
+- [ ] Decide whether separate `contact_channels` and `deliveries` tables are still needed or whether the current denormalized design is sufficient.
+- [ ] Add optional follow-up tables such as `conversation_snapshots` and `escalation_events` only if operationally justified.
 
 ## Target Data Model
 
-At minimum, introduce tables or equivalent models for:
+Current implementation status:
 
 - `contacts`
+  - implemented
   - canonical student identity across multiple bookings
-  - Telegram user id and other stable contact fields
 - `contact_channels`
-  - telegram username, email, phone, etc.
+  - not implemented as a separate table
+  - current design stores Telegram username, e-mail, phone, and similar fields directly on `contacts`
 - `bookings`
-  - booking payload, organizer/attendee metadata, status, meeting info
+  - implemented
+  - stores booking payload, organizer/attendee metadata, status, and meeting info
 - `messages`
-  - one row per inbound/outbound message
-  - direction, sender type, booking context, transport ids, content, timestamps
+  - implemented
+  - stores one row per inbound/outbound message with direction, booking context, transport ids, content, timestamps, and model output
 - `escalations`
+  - implemented
   - one row per escalated question with its own `escalation_id`
-  - status, reason, source message id, tutor message id, tutor reply
 - `deliveries`
-  - outbound delivery attempts and delivery status
+  - not implemented as a separate table
+  - current design stores delivery status and transport metadata on messages plus audit logs
 - `idempotency_keys`
-  - webhook/update deduplication with TTL or expiry metadata
+  - implemented
+  - webhook/update deduplication with expiry metadata
 
 Recommended follow-up or optional tables:
 
@@ -73,111 +76,103 @@ Recommended follow-up or optional tables:
 
 ## Functional Requirements
 
-- A student may have multiple active bookings.
-- A student may ask many questions in one chat.
-- The bot must continue answering safe questions even while some other student
+- [x] A student may have multiple active bookings.
+- [x] A student may ask many questions in one chat.
+- [x] The bot must continue answering safe questions even while some other student
   questions are waiting for the tutor.
-- Each unknown question must create an independent escalation record.
-- Tutor replies must resolve the correct escalation, not the entire booking.
-- Tutor replies must still be preserved in message history and reused in later
+- [x] Each unknown question must create an independent escalation record.
+- [x] Tutor replies must resolve the correct escalation, not the entire booking.
+- [x] Tutor replies must still be preserved in message history and reused in later
   model context.
-- Chat automation must not be globally disabled for a booking just because one
+- [x] Chat automation must not be globally disabled for a booking just because one
   question was escalated.
 
 ## Implementation Requirements
 
 ### Storage layer
 
-- Add a database module and repository layer instead of direct JSON-file writes
+- [x] Add a database module and repository layer instead of direct JSON-file writes
   from handlers.
-- Keep file-based audit and runtime logs unless explicitly migrated later.
-- Use transactional writes for multi-step flows such as:
+- [x] Keep file-based audit and runtime logs unless explicitly migrated later.
+- [x] Use transactional writes for multi-step flows such as:
   - inbound message persisted
   - escalation persisted
   - tutor card delivery metadata persisted
 
 ### Schema and migrations
 
-- Add SQL migrations for the initial schema.
-- Add a migration runner invoked in local/dev, CI, and deployment.
-- Add an import command that reads current `data/state/` files and inserts them
+- [x] Add SQL migrations for the initial schema.
+- [x] Add a migration runner invoked in local/dev, CI, and deployment.
+- [x] Add an import command that reads current `data/state/` files and inserts them
   into PostgreSQL.
 
 ### Runtime behavior
 
-- Replace one-result booking lookup with contact-aware booking resolution.
-- Replace single-file escalation storage with multi-record escalation storage.
-- Keep backward-compatible tutor reply routing during rollout where practical.
+- [x] Replace one-result booking lookup with contact-aware booking resolution.
+- [x] Replace single-file escalation storage with multi-record escalation storage.
+- [x] Keep backward-compatible tutor reply routing during rollout where practical.
 
 ## Testing Requirements
 
-Add or update automated tests for:
+Current automated coverage includes:
 
-- schema migration bootstrap on an empty database
-- import from existing JSON state into PostgreSQL
-- booking lookup when one student has multiple bookings
-- creating multiple open escalations for one booking
-- tutor reply resolving the intended escalation
-- preserving tutor replies in conversation/message history
-- idempotency behavior for webhook and Telegram updates
-- deployment smoke test that bridge starts and can reach PostgreSQL
+- [x] schema migration bootstrap on an empty database
+- [x] import from existing JSON state into PostgreSQL
+- [x] booking lookup when one student has multiple bookings
+- [x] creating multiple open escalations for one booking
+- [x] tutor reply resolving the intended escalation
+- [x] preserving tutor replies in conversation/message history
+- [x] idempotency behavior for webhook and Telegram updates
+- [ ] deployment smoke test that bridge starts and can reach PostgreSQL as a dedicated automated workflow
 
 Testing expectations:
 
-- unit tests for repository methods
-- integration tests against a real PostgreSQL instance in CI
-- workflow tests for student message -> escalation -> tutor reply -> student
-  delivery
+- implemented:
+  - unit tests for repository methods
+  - integration tests against a real PostgreSQL instance in CI
+  - workflow tests for student message -> escalation -> tutor reply -> student delivery
 
 ## Deployment Requirements
 
 ### Local/dev
 
-- Extend `compose.yaml` with PostgreSQL for local development.
-- Add the required env vars to `.env.example`.
-- Ensure `task up` or equivalent startup path brings the database up and runs
-  migrations before bridge starts serving traffic.
+- [x] `compose.yaml` includes PostgreSQL for local development.
+- [x] `.env.example` includes the required database env vars.
+- [x] `bridge` startup runs migrations before serving traffic, and `task up` brings the stack up through Docker Compose.
 
 ### Production
 
-- Update deployment so PostgreSQL is available on the server, either:
-  - as a new Docker Compose service, or
-  - as an external managed/Postgres host configured via env vars
-- Run DB migrations during deployment before recreating the bridge container.
-- Back up current `data/state/` before migration/import.
-- Import existing runtime state into PostgreSQL on first rollout.
-- Verify bridge health, Telegram polling, tutor reply routing, and webhook
-  handling after deploy.
+- [x] Production deployment brings PostgreSQL up through Docker Compose or can point to an external DB via `DATABASE_URL`.
+- [x] DB migrations run automatically during `bridge` startup in deployment.
+- [ ] Back up current `data/state/` before migration/import in any first-rollout legacy environment.
+- [ ] Import existing runtime state into PostgreSQL on first rollout for any remaining legacy environment.
+- [x] Bridge health, Telegram polling, tutor reply routing, and webhook handling are part of the documented post-deploy checks.
 
 ## Acceptance Criteria
 
-- Bridge no longer depends on JSON files for operational state reads/writes.
-- Existing state can be imported from `data/state/` without losing active
-  bookings, history, or pending escalations.
-- One student with multiple bookings is handled deterministically.
-- Multiple pending escalations for one booking are supported.
-- Tutor replies continue to reach the student and resolve the right escalation.
-- CI runs the PostgreSQL-backed test suite successfully.
-- Production deployment instructions are updated and validated.
+- [x] Bridge no longer depends on JSON files for operational state reads/writes.
+- [x] Existing state can be imported from `data/state/` without losing active bookings, history, or pending escalations.
+- [x] One student with multiple bookings is handled deterministically.
+- [x] Multiple pending escalations for one booking are supported.
+- [x] Tutor replies continue to reach the student and resolve the right escalation.
+- [x] CI runs the PostgreSQL-backed test suite successfully.
+- [x] Production deployment instructions are updated.
+- [ ] First-rollout legacy-environment validation should remain explicit in operational runbooks.
 
 ## Rollout Plan
 
-1. Add schema, repositories, and migration runner.
-2. Add PostgreSQL-backed tests in CI.
-3. Add import script from JSON state.
-4. Deploy PostgreSQL and run migrations on the server.
-5. Back up `data/state/`.
-6. Import current state into PostgreSQL.
-7. Deploy bridge with PostgreSQL enabled.
-8. Run smoke checks for booking linking, student Q&A, escalation, and tutor
-   reply routing.
+1. Keep the current PostgreSQL schema and migration chain as the source of truth.
+2. Preserve CI coverage against PostgreSQL on Python 3.12.
+3. For any legacy environment, back up `data/state/` before first rollout.
+4. Import legacy JSON state only where it still exists and matters.
+5. Deploy bridge with PostgreSQL enabled and let startup migrations run.
+6. Run smoke checks for booking linking, student Q&A, escalation, and tutor reply routing.
 
 ## Rollback Plan
 
-- Keep the JSON state backup until PostgreSQL rollout is verified.
-- If rollout fails, stop the new bridge version, restore the previous bridge
-  image/config, and switch back to the last known-good JSON-backed release.
-- Do not delete `data/state/` during the first PostgreSQL rollout.
+- Keep the JSON state backup until any legacy-environment PostgreSQL rollout is verified.
+- If a first-rollout migration fails, stop the new bridge version, restore the previous bridge image/config, and re-run from the preserved backup.
+- Do not delete `data/state/` during the first PostgreSQL rollout in environments that still rely on it for import.
 
 ## Related Files
 

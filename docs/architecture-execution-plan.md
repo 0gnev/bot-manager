@@ -17,7 +17,7 @@ Source of truth: the compact architecture prompt provided for Bot Manager.
 
 ## Next priority tasks
 
-- [ ] Implement PostgreSQL-backed runtime state with migration, tests, and production deployment plan.
+- [x] Implement PostgreSQL-backed runtime state with migration, tests, and production deployment plan.
   Reference: [postgresql-migration-task.md](/private/var/www/bot-manager/docs/postgresql-migration-task.md)
 - [x] Add a dedicated `contacts` entity aligned with the architecture instead of keeping contact data only inside booking payloads.
 - [x] Expand stored message records to include direction, attachments, model output, delivery status, and transport IDs.
@@ -26,5 +26,7 @@ Source of truth: the compact architecture prompt provided for Bot Manager.
 - [ ] Tighten student-booking linking to a stronger deeplink or signed-token flow instead of username fallback.
 - [x] Add retry/backoff policy around outbound Telegram delivery and OpenClaw calls.
 - [ ] Add an explicit emergency-stop/admin control surface beyond raw REST toggles.
-- [ ] Run the automated test suite in the intended Python 3.12 environment and wire it into the normal dev workflow.
+- [x] Run the automated test suite in the intended Python 3.12 environment and wire it into the normal dev workflow.
+- [ ] Keep first-rollout PostgreSQL backup/import/rollback runbooks explicit for any older environment still carrying legacy `data/state/`.
+- [ ] Decide whether separate `contact_channels` / `deliveries` tables are still needed or whether the current denormalized design is sufficient.
 - [ ] Update `uvicorn`/`websockets` to versions that no longer rely on the deprecated legacy websocket API, then remove the resulting system-test warnings.
