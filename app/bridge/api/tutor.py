@@ -33,7 +33,9 @@ from bridge.state import (
     load_controls,
     OperatingMode,
     save_controls,
+    save_tutor_time_zone,
 )
+from bridge.timezones import format_datetime, validate_time_zone_name
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,33 @@ def _serialize_ts(value):
     if value is not None and hasattr(value, "isoformat"):
         return value.isoformat()
     return value
+
+
+def _state_path(settings) -> str | None:
+    return getattr(settings, "state_path", None)
+
+
+async def _load_tutor_time_zone(settings) -> str | None:
+    state_path = _state_path(settings)
+    if state_path is None:
+        return None
+    try:
+        controls = await load_controls(state_path)
+    except Exception:
+        logger.warning("Could not load tutor time zone from runtime controls", exc_info=True)
+        return None
+    return controls.get("tutor_time_zone")
+
+
+def _display_ts(value, tutor_time_zone: str | None) -> str | None:
+    if value is None:
+        return None
+    return format_datetime(
+        value,
+        time_zone_name=tutor_time_zone,
+        fmt="%d.%m.%Y %H:%M",
+        fallback=None,
+    )
 
 
 def _excerpt(text: str | None, limit: int = 160) -> str:
@@ -114,6 +143,10 @@ class ChatAutomationRequest(BaseModel):
 class GlobalAutomationRequest(BaseModel):
     enabled: bool
     reason: str | None = None
+
+
+class TutorTimeZoneRequest(BaseModel):
+    time_zone: str
 
 
 async def _load_chat_target(
@@ -387,6 +420,7 @@ async def list_escalations(
     settings: Settings = Depends(get_settings),
 ) -> list[dict]:
     """List all pending escalations with booking context."""
+    tutor_time_zone = await _load_tutor_time_zone(settings)
     pool = get_pool()
     rows = await pool.fetch(
         """
@@ -406,6 +440,9 @@ async def list_escalations(
             val = data.get(ts_field)
             if val is not None and hasattr(val, "isoformat"):
                 data[ts_field] = val.isoformat()
+        data["created_at_local"] = _display_ts(row["created_at"], tutor_time_zone)
+        data["resolved_at_local"] = _display_ts(row["resolved_at"], tutor_time_zone)
+        data["display_time_zone"] = tutor_time_zone
         relevant_history = data.get("relevant_history")
         if isinstance(relevant_history, str):
             try:
@@ -435,6 +472,7 @@ async def list_chat_reviews(
     settings: Settings = Depends(get_settings),
 ) -> list[dict]:
     """List tutor-facing conversation summaries without reading raw state files."""
+    tutor_time_zone = await _load_tutor_time_zone(settings)
     pool = get_pool()
     rows = await pool.fetch(
         """
@@ -495,17 +533,24 @@ async def list_chat_reviews(
             "automation_enabled": row["automation_enabled"],
             "current_stage": row["current_stage"],
             "updated_at": _serialize_ts(row["updated_at"]),
+            "updated_at_local": _display_ts(row["updated_at"], tutor_time_zone),
+            "display_time_zone": tutor_time_zone,
             "active_booking": (
                 {
                     "booking_id": row["active_booking_id"],
                     "title": row["active_booking_title"],
                     "start_time": _serialize_ts(row["active_booking_start_time"]),
+                    "start_time_local": _display_ts(
+                        row["active_booking_start_time"],
+                        tutor_time_zone,
+                    ),
                 }
                 if row["active_booking_id"]
                 else None
             ),
             "last_message_excerpt": _excerpt(row["last_message_content"]),
             "last_message_at": _serialize_ts(row["last_message_at"]),
+            "last_message_at_local": _display_ts(row["last_message_at"], tutor_time_zone),
             "pending_escalations": row["pending_escalations"],
             "pending_approvals": row["pending_approvals"],
         }
@@ -522,6 +567,7 @@ async def get_chat_review(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Return booking-scoped conversation review payload."""
+    tutor_time_zone = await _load_tutor_time_zone(settings)
     booking = await bookings.load(settings.state_path, booking_id)
     if not booking:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Booking not found")
@@ -537,6 +583,7 @@ async def get_chat_review(
         "contact_id": contact_id,
         "booking": booking,
         "contact": contact,
+        "display_time_zone": tutor_time_zone,
         "chat": chat.to_dict(),
         "messages": chat.messages,
         "pending_escalations": await escalations.list_pending(
@@ -559,6 +606,7 @@ async def get_contact_chat_review(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Return contact-scoped conversation review payload."""
+    tutor_time_zone = await _load_tutor_time_zone(settings)
     contact = await contacts.load(settings.state_path, contact_id)
     if not contact:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Contact not found")
@@ -577,6 +625,7 @@ async def get_contact_chat_review(
             contact_id,
             active_only=False,
         ),
+        "display_time_zone": tutor_time_zone,
         "chat": chat.to_dict(),
         "messages": chat.messages,
         "pending_escalations": await escalations.list_pending(
@@ -599,6 +648,7 @@ async def get_escalation(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Get the latest escalation for a booking with booking context."""
+    tutor_time_zone = await _load_tutor_time_zone(settings)
     esc = await escalations.load(settings.state_path, booking_id)
     if not esc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Escalation not found")
@@ -609,11 +659,13 @@ async def get_escalation(
         esc["student_name"] = attendee.get("name", "")
         esc["event_title"] = booking.get("title", "")
         esc["start_time"] = booking.get("start_time")
+        esc["start_time_local"] = _display_ts(booking.get("start_time"), tutor_time_zone)
     elif esc.get("contact_id") is not None:
         contact = await contacts.load(settings.state_path, esc["contact_id"])
         if contact:
             esc["student_name"] = contact.get("name", "")
 
+    esc["display_time_zone"] = tutor_time_zone
     return esc
 
 
@@ -729,6 +781,54 @@ async def get_global_automation(
 ) -> dict:
     """Return current global automation control state."""
     return await load_controls(settings.state_path)
+
+
+@router.get(
+    "/timezone",
+    dependencies=[Depends(_verify_token)],
+)
+async def get_tutor_time_zone(
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    controls = await load_controls(settings.state_path)
+    return {
+        "time_zone": controls.get("tutor_time_zone"),
+        "updated_at": controls.get("updated_at"),
+    }
+
+
+@router.post(
+    "/timezone",
+    dependencies=[Depends(_verify_token)],
+)
+async def set_tutor_time_zone_endpoint(
+    body: TutorTimeZoneRequest,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    normalized = validate_time_zone_name(body.time_zone)
+    if not normalized:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Invalid IANA time zone",
+        )
+
+    controls = await save_tutor_time_zone(
+        settings.state_path,
+        tutor_time_zone=normalized,
+        updated_by="tutor",
+        reason="timezone_updated_via_api",
+    )
+    await audit_log(
+        "tutor",
+        "timezone_updated",
+        actor="tutor",
+        detail={"time_zone": normalized, "via": "api"},
+    )
+    return {
+        "ok": True,
+        "time_zone": controls.get("tutor_time_zone"),
+        "updated_at": controls.get("updated_at"),
+    }
 
 
 @router.post(

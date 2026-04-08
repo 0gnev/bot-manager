@@ -295,3 +295,28 @@ def test_openclaw_can_rewrite_approval_draft(monkeypatch) -> None:
         "confidence": 0.82,
     }
     assert _FakeAsyncClient.requests[0]["json"]["model"] == "openclaw"
+
+
+def test_sanitize_booking_includes_student_local_time_context() -> None:
+    booking = {
+        "title": "Пробный урок",
+        "start_time": "2026-04-06T06:30:00+00:00",
+        "end_time": "2026-04-06T07:00:00+00:00",
+        "meeting_url": "https://meet.example.com/test",
+        "status": "active",
+        "attendee": {
+            "name": "Student",
+            "timeZone": "Asia/Bishkek",
+        },
+        "organizer": {
+            "name": "Tutor",
+            "timeZone": "Europe/Moscow",
+        },
+    }
+
+    result = openclaw._sanitize_booking(booking)
+
+    assert result["student_time_zone"] == "Asia/Bishkek"
+    assert result["tutor_time_zone"] == "Europe/Moscow"
+    assert result["start_time_local"] == "06 Apr 2026, 12:30 (Asia/Bishkek)"
+    assert result["end_time_local"] == "06 Apr 2026, 13:00 (Asia/Bishkek)"

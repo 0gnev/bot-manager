@@ -94,6 +94,7 @@ def db_clean(pg_pool):
             await conn.execute("""
                 UPDATE runtime_controls SET
                     global_automation_enabled = TRUE,
+                    tutor_time_zone = NULL,
                     updated_by = 'system',
                     reason = NULL,
                     updated_at = now()

@@ -193,6 +193,8 @@ def test_tutor_reply_supports_contact_only_escalation(monkeypatch) -> None:
 
 
 def test_list_escalations_parses_relevant_history_json(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+
     async def fake_fetch(*args, **kwargs):
         return [
             {
@@ -218,16 +220,25 @@ def test_list_escalations_parses_relevant_history_json(monkeypatch) -> None:
         ]
 
     monkeypatch.setattr(tutor_api, "get_pool", lambda: SimpleNamespace(fetch=fake_fetch))
+    monkeypatch.setattr(
+        tutor_api,
+        "load_controls",
+        lambda *args, **kwargs: asyncio.sleep(0, result={"tutor_time_zone": "Europe/Moscow"}),
+    )
 
-    result = asyncio.run(tutor_api.list_escalations())
+    result = asyncio.run(tutor_api.list_escalations(settings))
 
     assert result[0]["escalation_id"] == 12
     assert result[0]["student_name"] == "Student"
     assert result[0]["relevant_history"][0]["content"] == "Здравствуйте"
     assert result[0]["draft_reply"] == "Занятие пройдёт онлайн."
+    assert result[0]["display_time_zone"] == "Europe/Moscow"
+    assert result[0]["created_at_local"] == "07.04.2026 11:00"
 
 
 def test_list_chat_reviews_returns_summary_rows(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+
     async def fake_fetch(*args, **kwargs):
         return [
             {
@@ -255,14 +266,51 @@ def test_list_chat_reviews_returns_summary_rows(monkeypatch) -> None:
         "get_pool",
         lambda: SimpleNamespace(fetch=fake_fetch),
     )
+    monkeypatch.setattr(
+        tutor_api,
+        "load_controls",
+        lambda *args, **kwargs: asyncio.sleep(0, result={"tutor_time_zone": "Europe/Moscow"}),
+    )
 
-    result = asyncio.run(tutor_api.list_chat_reviews())
+    result = asyncio.run(tutor_api.list_chat_reviews(settings=settings))
 
     assert result[0]["contact_id"] == 91
     assert result[0]["active_booking"]["booking_id"] == "booking-1"
     assert result[0]["pending_escalations"] == 2
     assert result[0]["pending_approvals"] == 1
     assert result[0]["last_message_excerpt"].endswith("…")
+    assert result[0]["display_time_zone"] == "Europe/Moscow"
+    assert result[0]["updated_at_local"] == "07.04.2026 11:30"
+    assert result[0]["active_booking"]["start_time_local"] == "07.04.2026 12:00"
+    assert result[0]["last_message_at_local"] == "07.04.2026 11:31"
+
+
+def test_set_tutor_time_zone_endpoint_persists_valid_time_zone(monkeypatch) -> None:
+    settings = SimpleNamespace(state_path="/tmp/state")
+    audited: list[dict] = []
+
+    async def fake_save_tutor_time_zone(*args, **kwargs):
+        return {
+            "tutor_time_zone": kwargs["tutor_time_zone"],
+            "updated_at": "2026-04-08T10:00:00+00:00",
+        }
+
+    async def fake_audit_log(*args, **kwargs) -> None:
+        audited.append(kwargs)
+
+    monkeypatch.setattr(tutor_api, "save_tutor_time_zone", fake_save_tutor_time_zone)
+    monkeypatch.setattr(tutor_api, "audit_log", fake_audit_log)
+
+    result = asyncio.run(
+        tutor_api.set_tutor_time_zone_endpoint(
+            tutor_api.TutorTimeZoneRequest(time_zone="Europe/Moscow"),
+            settings,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["time_zone"] == "Europe/Moscow"
+    assert audited[0]["detail"]["time_zone"] == "Europe/Moscow"
 
 
 def test_get_contact_chat_review_returns_related_context(monkeypatch) -> None:

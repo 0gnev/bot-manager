@@ -23,6 +23,7 @@ from bridge.audit import audit_log
 from bridge.config import Settings
 from bridge.policies.loader import render_policy_block
 from bridge.prompts.loader import render_prompt
+from bridge.timezones import format_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -482,12 +483,26 @@ def _sanitize_booking(booking: dict | None) -> dict | None:
         return None
     attendee = booking.get("attendee") or {}
     organizer = booking.get("organizer") or {}
+    student_time_zone = attendee.get("timeZone")
+    tutor_time_zone = organizer.get("timeZone")
     return {
         "title": booking.get("title", ""),
         "start_time": booking.get("start_time"),
         "end_time": booking.get("end_time"),
+        "start_time_local": format_datetime(
+            booking.get("start_time"),
+            time_zone_name=student_time_zone,
+            include_time_zone=bool(student_time_zone),
+        ),
+        "end_time_local": format_datetime(
+            booking.get("end_time"),
+            time_zone_name=student_time_zone,
+            include_time_zone=bool(student_time_zone),
+        ),
         "student_name": attendee.get("name", ""),
+        "student_time_zone": student_time_zone,
         "tutor_name": organizer.get("name", ""),
+        "tutor_time_zone": tutor_time_zone,
         "meeting_url": booking.get("meeting_url"),
         "status": booking.get("status"),
     }

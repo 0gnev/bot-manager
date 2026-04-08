@@ -9,22 +9,48 @@ from datetime import datetime
 from html import escape
 
 from bridge.prompts.loader import render_prompt
+from bridge.timezones import format_datetime, validate_time_zone_name
 
 
-def fmt_dt(dt: datetime | None) -> str:
-    if dt is None:
-        return "—"
-    return dt.strftime("%d %b %Y, %H:%M")
+def fmt_dt(
+    dt: datetime | None,
+    *,
+    time_zone_name: str | None = None,
+    include_time_zone: bool = False,
+) -> str:
+    return format_datetime(
+        dt,
+        time_zone_name=time_zone_name,
+        include_time_zone=include_time_zone,
+    )
+
+
+def _time_zone_line(
+    time_zone_name: str | None,
+    *,
+    label: str = "Часовой пояс",
+) -> str:
+    normalized = validate_time_zone_name(time_zone_name)
+    if not normalized:
+        return ""
+    return f"{label}: <b>{escape(normalized)}</b>"
 
 
 # -- Student messages ----------------------------------------------------------
 
-def welcome(student_name: str, event_title: str, start_time: datetime | None) -> str:
+def welcome(
+    student_name: str,
+    event_title: str,
+    start_time: datetime | None,
+    *,
+    time_zone_name: str | None = None,
+) -> str:
     return render_prompt(
         "welcome",
         student_name=student_name,
         event_title=event_title,
-        start_time=fmt_dt(start_time),
+        start_time=fmt_dt(start_time, time_zone_name=time_zone_name),
+        time_zone_line=_time_zone_line(time_zone_name),
     )
 
 
@@ -33,12 +59,17 @@ def session_details(
     start_time: datetime | None,
     end_time: datetime | None,
     meeting_url: str | None,
+    *,
+    time_zone_name: str | None = None,
 ) -> str:
     lines = [
         f"<b>{event_title}</b>",
-        f"Начало: {fmt_dt(start_time)}",
-        f"Конец:  {fmt_dt(end_time)}",
+        f"Начало: {fmt_dt(start_time, time_zone_name=time_zone_name)}",
+        f"Конец:  {fmt_dt(end_time, time_zone_name=time_zone_name)}",
     ]
+    time_zone_line = _time_zone_line(time_zone_name)
+    if time_zone_line:
+        lines.append(time_zone_line)
     if meeting_url:
         lines.append(f'Ссылка: <a href="{meeting_url}">Подключиться</a>')
     return "\n".join(lines)
@@ -68,7 +99,7 @@ def multiple_bookings_found(bookings: list[dict]) -> str:
     for index, booking in enumerate(bookings, start=1):
         lines.append(
             f"{index}. {escape(booking.get('title', 'Занятие'))} "
-            f"({escape(booking.get('start_time_label', '—'))})"
+            f"— {escape(booking.get('start_time_label', '—'))}"
         )
     return "\n".join(lines)
 
@@ -96,12 +127,17 @@ def booking_rescheduled(
     start_time: datetime | None,
     end_time: datetime | None,
     meeting_url: str | None,
+    *,
+    time_zone_name: str | None = None,
 ) -> str:
     lines = [
         "⏰ <b>Время занятия изменилось</b>\n",
         f"<b>{event_title}</b>",
-        f"Новое время: {fmt_dt(start_time)} — {fmt_dt(end_time)}",
+        f"Новое время: {fmt_dt(start_time, time_zone_name=time_zone_name)} — {fmt_dt(end_time, time_zone_name=time_zone_name)}",
     ]
+    time_zone_line = _time_zone_line(time_zone_name)
+    if time_zone_line:
+        lines.append(time_zone_line)
     if meeting_url:
         lines.append(f'Ссылка: <a href="{meeting_url}">Подключиться</a>')
     return "\n".join(lines)
@@ -127,6 +163,7 @@ def escalation_notice(
     question: str,
     event_title: str | None,
     start_time: datetime | None,
+    viewer_time_zone: str | None = None,
     student_email: str | None = None,
     student_phone: str | None = None,
     student_telegram: str | None = None,
@@ -143,6 +180,7 @@ def escalation_notice(
         question=question,
         event_title=event_title,
         start_time=start_time,
+        viewer_time_zone=viewer_time_zone,
         student_email=student_email,
         student_phone=student_phone,
         student_telegram=student_telegram,
@@ -162,6 +200,7 @@ def manual_escalation_notice(
     question: str,
     event_title: str | None,
     start_time: datetime | None,
+    viewer_time_zone: str | None = None,
     student_email: str | None = None,
     student_phone: str | None = None,
     student_telegram: str | None = None,
@@ -178,6 +217,7 @@ def manual_escalation_notice(
         question=question,
         event_title=event_title,
         start_time=start_time,
+        viewer_time_zone=viewer_time_zone,
         student_email=student_email,
         student_phone=student_phone,
         student_telegram=student_telegram,
@@ -197,6 +237,7 @@ def tutor_notice(
     question: str,
     event_title: str | None,
     start_time: datetime | None,
+    viewer_time_zone: str | None = None,
     student_email: str | None = None,
     student_phone: str | None = None,
     student_telegram: str | None = None,
@@ -220,12 +261,14 @@ def tutor_notice(
         lines.append(f"<b>Email:</b> {escape(student_email)}")
     if student_time_zone:
         lines.append(f"<b>Часовой пояс:</b> {escape(student_time_zone)}")
+    if viewer_time_zone:
+        lines.append(f"<b>Показано в часовом поясе:</b> {escape(viewer_time_zone)}")
     if student_telegram_user_id:
         lines.append(f"<b>Telegram user ID:</b> <code>{student_telegram_user_id}</code>")
 
     if booking_id:
         lines.append(
-            f"<b>Занятие:</b> {escape(event_title or 'Занятие')} ({escape(fmt_dt(start_time))})"
+            f"<b>Занятие:</b> {escape(event_title or 'Занятие')} — {escape(fmt_dt(start_time, time_zone_name=viewer_time_zone))}"
         )
         lines.append(f"<b>ID брони:</b> <code>{escape(booking_id)}</code>")
     else:
