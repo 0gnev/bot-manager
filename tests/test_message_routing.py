@@ -181,7 +181,7 @@ def test_student_message_without_booking_routes_via_contact(monkeypatch) -> None
     monkeypatch.setattr(messages, "knowledge_search", fake_search)
     monkeypatch.setattr(messages, "send_student_message", fake_send_student_message)
     monkeypatch.setattr(messages, "audit_log", fake_audit_log)
-    monkeypatch.setattr(messages, "OpenclawClient", FakeClient)
+    monkeypatch.setattr(messages, "LLMService", FakeClient)
 
     asyncio.run(messages.on_text(message, "student", settings))
 
@@ -243,7 +243,7 @@ def test_semi_auto_without_booking_submits_contact_only_approval(monkeypatch) ->
     monkeypatch.setattr(messages, "knowledge_search", fake_search)
     monkeypatch.setattr(messages, "submit_for_approval", fake_submit_for_approval)
     monkeypatch.setattr(messages, "audit_log", fake_audit_log)
-    monkeypatch.setattr(messages, "OpenclawClient", FakeClient)
+    monkeypatch.setattr(messages, "LLMService", FakeClient)
 
     asyncio.run(messages.on_text(message, "student", settings))
 
@@ -293,7 +293,7 @@ def test_student_message_in_degraded_mode_routes_to_manual_with_notice(monkeypat
             self.settings = settings_obj
 
         async def chat(self, **kwargs):
-            raise AssertionError("OpenClaw must not run in degraded mode")
+            raise AssertionError("The LLM must not run in degraded mode")
 
     monkeypatch.setattr(messages, "_resolve_contact_context", fake_resolve_contact_context)
     monkeypatch.setattr(messages.conversations, "append", fake_append)
@@ -302,7 +302,7 @@ def test_student_message_in_degraded_mode_routes_to_manual_with_notice(monkeypat
     monkeypatch.setattr(messages, "load_controls", fake_load_controls)
     monkeypatch.setattr(messages, "audit_log", fake_audit_log)
     monkeypatch.setattr(messages, "_handle_manual", fake_handle_manual)
-    monkeypatch.setattr(messages, "OpenclawClient", FailIfCalled)
+    monkeypatch.setattr(messages, "LLMService", FailIfCalled)
 
     asyncio.run(messages.on_text(message, "student", settings))
 
@@ -351,7 +351,7 @@ def test_student_message_in_frozen_mode_routes_to_manual_without_notice(monkeypa
             self.settings = settings_obj
 
         async def chat(self, **kwargs):
-            raise AssertionError("OpenClaw must not run in frozen mode")
+            raise AssertionError("The LLM must not run in frozen mode")
 
     monkeypatch.setattr(messages, "_resolve_contact_context", fake_resolve_contact_context)
     monkeypatch.setattr(messages.conversations, "append", fake_append)
@@ -360,7 +360,7 @@ def test_student_message_in_frozen_mode_routes_to_manual_without_notice(monkeypa
     monkeypatch.setattr(messages, "load_controls", fake_load_controls)
     monkeypatch.setattr(messages, "audit_log", fake_audit_log)
     monkeypatch.setattr(messages, "_handle_manual", fake_handle_manual)
-    monkeypatch.setattr(messages, "OpenclawClient", FailIfCalled)
+    monkeypatch.setattr(messages, "LLMService", FailIfCalled)
 
     asyncio.run(messages.on_text(message, "student", settings))
 
@@ -404,7 +404,7 @@ def test_tutor_message_exports_contact_dialogue_without_llm(monkeypatch) -> None
                     "role": "assistant",
                     "content": "Здравствуйте",
                     "ts": "2026-04-07T16:01:00+00:00",
-                    "source": "openclaw",
+                    "source": "ai_answer",
                 },
             ]
         )
@@ -461,7 +461,7 @@ def test_tutor_dialog_command_exports_contact_dialogue(monkeypatch) -> None:
                     "role": "assistant",
                     "content": "Здравствуйте",
                     "ts": "2026-04-07T16:01:00+00:00",
-                    "source": "openclaw",
+                    "source": "ai_answer",
                 },
             ]
         )

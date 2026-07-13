@@ -28,63 +28,6 @@ jobs:
         run: |
           test -n "$OPENAI_API_KEY" || { echo "OPENAI_API_KEY is required"; exit 1; }
 
-      - name: Generate ephemeral gateway token
-        run: |
-          python - <<'PY' >> "$GITHUB_ENV"
-          import secrets
-          print(f"GATEWAY_AUTH_TOKEN={secrets.token_hex(24)}")
-          PY
-
-      - name: Create workflow env file
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GATEWAY_AUTH_TOKEN: ${{ env.GATEWAY_AUTH_TOKEN }}
-        run: |
-          cat > .env <<EOF
-          PROJECT_NAME=bot-manager
-          TZ=UTC
-          OPENAI_API_KEY=${OPENAI_API_KEY}
-          ANTHROPIC_API_KEY=
-          TELEGRAM_BOT_TOKEN_STUDENT=dummy-student-token
-          TELEGRAM_BOT_TOKEN_OWNER=dummy-owner-token
-          TELEGRAM_MODE=polling
-          TUTOR_CHAT_ID=1
-          PLANERKA_BASE_URL=http://example.invalid
-          PLANERKA_API_KEY=dummy
-          PLANERKA_WEBHOOK_SECRET=dummy
-          GATEWAY_AUTH_TOKEN=${GATEWAY_AUTH_TOKEN}
-          TUTOR_API_TOKEN=dummy
-          OPENCLAW_CONFIG_PATH=/workspace/live-llm/openclaw.json
-          OBSIDIAN_SOURCE_PATH=/tmp/obsidian
-          KNOWLEDGE_MIRROR_PATH=/workspace/data/knowledge
-          DATABASE_URL=postgresql://bridge:bridge@postgres:5432/bridge
-          AUDIT_PATH=/workspace/data/audit
-          LOG_PATH=/workspace/data/logs
-          LOG_LEVEL=INFO
-          EOF
-
-      - name: Prepare writable OpenClaw runtime config
-        run: |
-          mkdir -p data/openclaw/live-llm
-          cp config/openclaw.json data/openclaw/live-llm/openclaw.json
-
-      - name: Start OpenClaw
-        run: docker compose --env-file .env up -d openclaw
-
-      - name: Wait for OpenClaw health
-        run: |
-          cid="$(docker compose --env-file .env ps -q openclaw)"
-          test -n "$cid" || { echo "openclaw container not found"; exit 1; }
-          for _ in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:18789/health >/dev/null; then
-              exit 0
-            fi
-            sleep 2
-          done
-          docker inspect -f '{{json .State.Health}}' "$cid" || true
-          docker compose --env-file .env logs --tail=200 openclaw || true
-          exit 1
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -101,26 +44,10 @@ jobs:
         env:
           PYTHONPATH: app
           RUN_LIVE_LLM_TESTS: "1"
-          OPENCLAW_BASE_URL: http://127.0.0.1:18789
-          GATEWAY_AUTH_TOKEN: ${{ env.GATEWAY_AUTH_TOKEN }}
+          LLM_PROVIDER: openai
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           AUDIT_PATH: ${{ github.workspace }}/data/audit
           LOG_PATH: ${{ github.workspace }}/data/logs
-        run: python -m pytest -q -m live_llm tests/live/test_openclaw_live.py
-
-      - name: Dump OpenClaw logs on failure
-        if: failure()
         run: |
-          if [ -f .env ]; then
-            docker compose --env-file .env logs --tail=200 openclaw || true
-          else
-            echo ".env was not created; skipping OpenClaw log dump"
-          fi
-
-      - name: Stop OpenClaw
-        if: always()
-        run: |
-          if [ -f .env ]; then
-            docker compose --env-file .env down --remove-orphans
-          else
-            echo ".env was not created; skipping docker compose down"
-          fi
+          mkdir -p data/audit data/logs
+          python -m pytest -q -m live_llm tests/live/test_llm_live.py

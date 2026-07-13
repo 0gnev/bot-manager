@@ -26,7 +26,7 @@ from bridge.approvals import handler as approval_handler
 from bridge.audit import audit_log
 from bridge.bot import registry
 from bridge.bot.filters import TutorBotFilter
-from bridge.clients.openclaw import OpenclawClient
+from bridge.llm import LLMService
 from bridge.config import Settings
 from bridge.delivery import send_student_message
 from bridge.knowledge_learning import approve_suggestion, reject_suggestion, schedule_capture
@@ -653,7 +653,7 @@ async def on_tutor_message(message: Message, role: str, settings: Settings) -> N
         return
 
     knowledge = await knowledge_search(settings.knowledge_path, message.text, limit=5)
-    client = OpenclawClient(settings)
+    client = LLMService(settings)
     reply = await client.tutor_assistant(message.text, knowledge=knowledge)
     await message.answer(reply, disable_web_page_preview=True)
 

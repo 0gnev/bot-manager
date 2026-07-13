@@ -218,7 +218,7 @@ class FakeTelegramState:
         return self.sent_since(token, 0)
 
 
-class FakeOpenClawState:
+class FakeLLMState:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.requests: list[dict[str, Any]] = []
@@ -262,7 +262,7 @@ class FakeOpenClawState:
                 "object": "response",
                 "created_at": int(time.time()),
                 "status": "completed",
-                "model": str(payload.get("model") or "openclaw"),
+                "model": str(payload.get("model") or "fake-model"),
                 "output": [
                     {
                         "type": "message",
@@ -390,7 +390,7 @@ def create_fake_telegram_app(state: FakeTelegramState) -> FastAPI:
     return app
 
 
-def create_fake_openclaw_app(state: FakeOpenClawState) -> FastAPI:
+def create_fake_llm_app(state: FakeLLMState) -> FastAPI:
     app = FastAPI()
 
     @app.get("/health")
@@ -433,7 +433,7 @@ async def _read_request_payload(request: Request) -> dict[str, Any]:
 class BridgeHarness:
     base_url: str
     telegram: FakeTelegramState
-    openclaw: FakeOpenClawState
+    llm: FakeLLMState
     student_token: str
     owner_token: str
     student_chat_id: int
@@ -566,7 +566,7 @@ def build_system_harness(*, database_url: str, tmp_path: Path) -> tuple[BridgeHa
     api_token = "tutor-api-token"
 
     fake_tg_port = _find_free_port()
-    fake_openclaw_port = _find_free_port()
+    fake_llm_port = _find_free_port()
     bridge_port = _find_free_port()
 
     telegram = FakeTelegramState(
@@ -575,13 +575,13 @@ def build_system_harness(*, database_url: str, tmp_path: Path) -> tuple[BridgeHa
             owner_token: {"id": 202, "first_name": "TutorBot", "username": "tutor_bot"},
         }
     )
-    openclaw = FakeOpenClawState()
+    llm = FakeLLMState()
 
     telegram_server = UvicornThreadServer(create_fake_telegram_app(telegram), fake_tg_port)
-    openclaw_server = UvicornThreadServer(create_fake_openclaw_app(openclaw), fake_openclaw_port)
+    llm_server = UvicornThreadServer(create_fake_llm_app(llm), fake_llm_port)
 
     telegram_server.start()
-    openclaw_server.start()
+    llm_server.start()
 
     runtime_root = tmp_path / "runtime"
     state_path = runtime_root / "state"
@@ -602,8 +602,9 @@ def build_system_harness(*, database_url: str, tmp_path: Path) -> tuple[BridgeHa
             "TELEGRAM_MODE": "polling",
             "PLANERKA_API_KEY": "unused",
             "PLANERKA_WEBHOOK_SECRET": webhook_secret,
-            "GATEWAY_AUTH_TOKEN": "gateway-token",
-            "OPENCLAW_BASE_URL": f"http://127.0.0.1:{fake_openclaw_port}",
+            "LLM_PROVIDER": "custom",
+            "LLM_BASE_URL": f"http://127.0.0.1:{fake_llm_port}/v1",
+            "LLM_MODEL": "fake-model",
             "TUTOR_API_TOKEN": api_token,
             "TUTOR_CHAT_ID": "9001",
             "DATABASE_URL": database_url,
@@ -625,7 +626,7 @@ def build_system_harness(*, database_url: str, tmp_path: Path) -> tuple[BridgeHa
     harness = BridgeHarness(
         base_url=base_url,
         telegram=telegram,
-        openclaw=openclaw,
+        llm=llm,
         student_token=student_token,
         owner_token=owner_token,
         student_chat_id=501,
@@ -634,4 +635,4 @@ def build_system_harness(*, database_url: str, tmp_path: Path) -> tuple[BridgeHa
         api_token=api_token,
     )
 
-    return harness, [bridge, telegram_server, openclaw_server]
+    return harness, [bridge, telegram_server, llm_server]

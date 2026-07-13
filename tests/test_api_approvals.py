@@ -141,7 +141,7 @@ def test_revise_pending_approval_never_direct_sends_without_explicit_send(monkey
     monkeypatch.setattr(approval_handler.bookings, "find_all_by_contact", fake_find_all_by_contact)
     monkeypatch.setattr(approval_handler.conversations, "load", fake_load_history)
     monkeypatch.setattr(approval_handler.registry, "get_owner", lambda: FakeOwnerBot())
-    monkeypatch.setattr(approval_handler, "OpenclawClient", FakeClient)
+    monkeypatch.setattr(approval_handler, "LLMService", FakeClient)
     monkeypatch.setattr(approval_handler.approvals, "update_pending_draft", fake_update_pending_draft)
     monkeypatch.setattr(approval_handler.conversations, "update_metadata", fake_update_metadata)
     monkeypatch.setattr(approval_handler, "audit_log", fake_audit_log)

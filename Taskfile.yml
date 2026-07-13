@@ -15,11 +15,6 @@ tasks:
     cmds:
       - bash scripts/init-local.sh
 
-  sync-knowledge:
-    desc: Sync Obsidian vault into local knowledge mirror
-    cmds:
-      - bash scripts/sync-knowledge.sh
-
   build:
     desc: Build containers
     cmds:
@@ -86,7 +81,7 @@ tasks:
       - bash scripts/run-pytest-in-docker.sh
 
   test-system:
-    desc: Run end-to-end system tests against fake Telegram/OpenClaw services in Docker
+    desc: Run end-to-end system tests against fake Telegram/LLM services in Docker
     cmds:
       - bash scripts/run-pytest-in-docker.sh tests/system
 

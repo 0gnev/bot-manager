@@ -4,7 +4,7 @@ This project uses three GitHub Actions workflows:
 
 - `CI`: installs Python dependencies, runs `pytest`, and validates the Bridge Docker image build
 - `CD`: deploys `main` to the production server after CI succeeds
-- `Live LLM Smoke`: manually starts a real `openclaw` container and runs one
+- `Live LLM Smoke`: manually calls the real configured LLM provider and runs one
   opt-in smoke test against the configured provider
 
 ## Required repository secrets
@@ -56,14 +56,12 @@ steps are documented in [production-operations.md](/private/var/www/bot-manager/
 
 It is manual-only and should be used when you want to verify that:
 
-- `openclaw` boots with the intended project config
 - the configured provider credentials are valid
 - a simple known booking question does not immediately fall back to escalation
 
-It runs:
-
-- the real `alpine/openclaw` container from [compose.yaml](/private/var/www/bot-manager/compose.yaml)
-- the live test [test_openclaw_live.py](/private/var/www/bot-manager/tests/live/test_openclaw_live.py)
+It runs the live test
+[test_llm_live.py](/private/var/www/bot-manager/tests/live/test_llm_live.py)
+against the real provider (OpenAI by default) — no containers are started.
 
 It does not replace the deterministic `CI` suite.
 
@@ -71,19 +69,6 @@ The workflow is attached to the `production` GitHub environment so it can reuse
 the same provider secrets as deploy. If those secrets are stored only at the
 environment level, the job will fail fast during secret validation when the
 environment binding is missing.
-
-`GATEWAY_AUTH_TOKEN` is generated per workflow run and is not stored as a
-GitHub secret. That is intentional: the token is only used inside the single
-runner job between the temporary `openclaw` container and the smoke test.
-
-The workflow also copies [openclaw.json](/private/var/www/bot-manager/config/openclaw.json)
-into a writable runtime path under `data/openclaw/` before starting the
-container. This avoids OpenClaw startup failures when it tries to persist
-plugin auto-enable state back into `OPENCLAW_CONFIG_PATH`.
-
-The workflow waits for OpenClaw via HTTP `GET /health`, not Docker
-`Health.Status`, because the HTTP probe proved to be the more reliable readiness
-signal for the gateway in Actions.
 
 ## Recommended GitHub environment setup
 

@@ -16,7 +16,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bridge.audit import audit_log
 from bridge.bot import registry
-from bridge.clients.openclaw import OpenclawClient
+from bridge.llm import LLMService
 from bridge.config import Settings
 from bridge.db import get_pool
 from bridge.state import bookings, contacts
@@ -178,7 +178,7 @@ async def capture(
     booking = await bookings.load(settings.state_path, booking_id) if booking_id else None
     contact = await contacts.load(settings.state_path, contact_id) if contact_id is not None else None
 
-    candidate = await OpenclawClient(settings).propose_knowledge_candidate(
+    candidate = await LLMService(settings).propose_knowledge_candidate(
         source_question=source_question,
         final_answer=final_answer,
         booking_context={

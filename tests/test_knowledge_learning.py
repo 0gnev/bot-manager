@@ -34,7 +34,7 @@ def test_capture_skips_private_candidate(monkeypatch) -> None:
     async def fake_audit_log(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(knowledge_learning, "OpenclawClient", FakeClient)
+    monkeypatch.setattr(knowledge_learning, "LLMService", FakeClient)
     monkeypatch.setattr(knowledge_learning.bookings, "load", fake_load_booking)
     monkeypatch.setattr(knowledge_learning.contacts, "load", fake_load_contact)
     monkeypatch.setattr(knowledge_learning.suggestions_state, "create", fake_create)

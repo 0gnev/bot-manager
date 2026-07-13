@@ -7,7 +7,7 @@ controlled fakes:
 
 - fake Planerka webhook input through `POST /webhook/planerka`
 - fake Telegram Bot API for both student and tutor bots
-- fake OpenClaw API with deterministic responses
+- fake LLM API (OpenAI-compatible) with deterministic responses
 - real PostgreSQL state and migrations
 
 Normal `CI` also runs the full pytest suite directly on GitHub Actions with a
@@ -107,7 +107,7 @@ Remote wrapper:
 - The Docker-based runner does not target the live `bridge` database by default.
 - The remote server must have both Docker and `task` installed if
   `SYSTEM_TEST_COMMAND=task test-system` is used.
-- These tests are deterministic only because Telegram and OpenClaw are faked.
+- These tests are deterministic only because Telegram and the LLM API are faked.
   They do not talk to real Telegram or real AI providers.
 
 ## Live LLM smoke testing
@@ -116,9 +116,9 @@ For real-provider validation there is a separate manual GitHub Actions workflow:
 
 - `Live LLM Smoke`
 
-It uses the real `openclaw` container and opt-in smoke checks for:
+It calls the configured real provider directly with opt-in smoke checks for:
 
-- [tests/live/test_openclaw_live.py](/private/var/www/bot-manager/tests/live/test_openclaw_live.py)
+- [tests/live/test_llm_live.py](/private/var/www/bot-manager/tests/live/test_llm_live.py)
 
 Current live scenarios in that file:
 
@@ -134,11 +134,11 @@ This separation is intentional:
 - deterministic tests stay stable in normal `CI`
 - live-provider/auth failures are isolated to a manual smoke run
 - model output is checked only at the behavior level, not by exact wording
-- gateway/model-format errors must fail the live smoke run explicitly, not pass as fake “answers”
+- provider/model-format errors must fail the live smoke run explicitly, not pass as fake “answers”
 
 ## When to use which test
 
 - `task test`: before merge or after significant changes
 - `task test-system`: when changing booking, Telegram, escalation, tutor reply,
-  OpenClaw routing, or webhook logic
+  LLM routing, or webhook logic
 - `task system-test-remote`: when validating behavior on the dedicated server

@@ -27,7 +27,7 @@ The intended architecture is:
 - Planerka
 - Telegram transport
 - Bot Manager orchestration layer
-- OpenClaw / AI layer
+- direct LLM provider layer (cloud models by API key and/or local models)
 - Obsidian knowledge layer
 - human tutor as final authority
 
@@ -36,7 +36,6 @@ The intended architecture is:
 ### Core runtime services
 
 - `bridge`: the main Bot Manager service
-- `openclaw`: AI gateway used by Bridge
 - `postgres`: operational state store used by Bridge at runtime
 
 ### Conversation ownership model
@@ -65,12 +64,12 @@ Current intended routing:
 
 - student bot is polled by `bridge`
 - tutor/owner bot is also polled by `bridge`
-- OpenClaw Telegram channel must stay disabled
+- nothing else may poll these bot tokens
 
 Why this matters:
 
 - tutor `reply` to a student escalation card must be handled by Bot Manager
-- if OpenClaw also polls Telegram, reply routing breaks or conflicts with Bridge
+- if another process polls the same token, reply routing breaks (`409 Conflict`)
 - escalation cards now include a deterministic summary, recent dialogue excerpt,
   and a draft reply when policy logic escalates an otherwise answerable message
 - approval cards now include inline approve/reject buttons
@@ -88,7 +87,6 @@ Relevant files:
 - [compose.yaml](/private/var/www/bot-manager/compose.yaml)
 - [config/botmanager.json](/private/var/www/bot-manager/config/botmanager.json)
 - [config/routing.json](/private/var/www/bot-manager/config/routing.json)
-- [config/openclaw.json](/private/var/www/bot-manager/config/openclaw.json)
 - [app/bridge/api/tutor.py](/private/var/www/bot-manager/app/bridge/api/tutor.py)
 
 Tutor/operator review surface now exists in the API:
@@ -104,31 +102,23 @@ Tutor/operator review surface now exists in the API:
   - `/panic <reason>` to freeze student-facing automatic replies while still recording inbound traffic
   - `/resume <reason>` to restore normal automation
 
-Important config constraint:
-
-- `config/openclaw.json` must stay strict JSON
-- do not add pseudo-comment keys such as `$comment`
-- recent OpenClaw builds reject unknown root keys during startup
-
 ## 3. Environment variables you must preserve
 
 Use `.env.example` as the reference schema.
 
 Important variables:
 
-- `OPENAI_API_KEY`
-- `ANTHROPIC_API_KEY`
+- `LLM_PROVIDER`, `LLM_MODEL`, `LLM_FALLBACKS`
+- `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` (per provider)
 - `TELEGRAM_BOT_TOKEN_STUDENT`
 - `TELEGRAM_BOT_TOKEN_OWNER`
 - `TUTOR_CHAT_ID`
 - `PLANERKA_BASE_URL`
 - `PLANERKA_API_KEY`
 - `PLANERKA_WEBHOOK_SECRET`
-- `GATEWAY_AUTH_TOKEN`
 - `TUTOR_API_TOKEN`
 - `DATABASE_URL`
-- `OBSIDIAN_SOURCE_PATH`
-- `KNOWLEDGE_MIRROR_PATH`
+- `OBSIDIAN_VAULT_PATH`
 - `AUDIT_PATH`
 
 Reference:
@@ -176,7 +166,7 @@ That script:
 2. fetches refs and checks out the requested branch
 3. pulls `main`
 4. runs `docker compose --env-file .env up -d --build --force-recreate`
-5. starts `postgres`, `openclaw`, and `bridge` with the new code/config
+5. starts `postgres` and `bridge` with the new code/config
 6. lets `bridge` apply any pending PostgreSQL migrations during startup
 7. waits for `bridge` to become healthy on `http://127.0.0.1:8081/health`
 8. prints recent `bridge` logs and fails if startup never becomes healthy
@@ -215,6 +205,15 @@ running.
 ```bash
 git clone <repo-url>
 cd bot-manager
+./install.sh
+botmgr setup
+botmgr doctor
+botmgr up
+```
+
+Manual equivalent without the `botmgr` CLI:
+
+```bash
 bash scripts/init-local.sh
 cp .env.example .env
 # fill in real secrets
@@ -263,39 +262,13 @@ If the server cannot pull from GitHub, verify:
 
 - `bridge` polls the student bot
 - `bridge` polls the tutor/owner bot
-- OpenClaw Telegram channel must remain disabled
-
-### Critical gotcha
-
-OpenClaw has two configuration layers:
-
-- repo config: `config/openclaw.json`
-- persisted runtime config: `data/openclaw/config/openclaw.json`
-- runtime env path: `OPENCLAW_CONFIG_PATH` (defaults to `/workspace/config/openclaw.json`)
-
-Even if the repo config has Telegram disabled, the persisted OpenClaw runtime
-config may still have Telegram enabled.
-
-The Docker service must mount `./config` into `/workspace/config`, otherwise
-OpenClaw can start without the intended repo config and fall back to its own
-internal defaults.
-
-If that happens, OpenClaw will start its own Telegram provider and cause polling
-conflicts with Bridge.
-
-### Required state
-
-Both of these should effectively have Telegram disabled for OpenClaw:
-
-- [config/openclaw.json](/private/var/www/bot-manager/config/openclaw.json)
-- `data/openclaw/config/openclaw.json` on the deployed machine
+- `bridge` is the only process allowed to poll either token
 
 ### Symptom of bad state
 
-If Telegram is enabled in OpenClaw, logs will show `409 Conflict` or
-`getUpdates conflict`.
-
-That means more than one process is polling the same bot token.
+If another process (an old container, a second deployment, a local dev run
+against production tokens) polls the same bot token, logs will show
+`409 Conflict` or `getUpdates conflict`. Find and stop the other process.
 
 ## 9. How tutor replies are supposed to work
 
@@ -347,8 +320,6 @@ The main operational source of truth is now PostgreSQL.
   - Bridge can also create pending knowledge suggestions from tutor-approved replies, but they are saved into static knowledge only after explicit tutor approval
 - `data/uploads`
   - persisted uploaded media used in student/tutor message flows
-- `data/openclaw`
-  - OpenClaw runtime state and persisted config
 - `data/state`
   - legacy JSON state kept for migration/import, backup, or older environment
     restores; it is no longer the primary runtime storage layer
@@ -409,7 +380,6 @@ Expected:
 
 - `postgres` healthy
 - `bridge` healthy
-- `openclaw` healthy
 - Bridge logs show polling for both bots
 - no Telegram conflict errors
 
@@ -455,7 +425,6 @@ Most likely causes:
 
 - container was not recreated
 - server is still running an older process
-- OpenClaw persisted runtime config overrides repo config
 
 Preferred fix:
 
@@ -481,15 +450,16 @@ Current tests cover:
 - policy engine
 - state workflows
 - tutor API behavior
-- OpenClaw client behavior
+- LLM provider layer behavior (parsing, registry, failover)
 - import from legacy JSON state
 - end-to-end system message flow in the Docker harness
-- live LLM smoke workflow for real-provider OpenClaw validation
+- live LLM smoke workflow for real-provider validation
 
 Runtime resiliency now includes bounded retries:
 
 - outbound student-facing Telegram delivery retries before marking delivery failed
-- OpenClaw gateway calls retry on transport failures and retryable HTTP statuses
+- LLM provider calls retry on transport failures and retryable HTTP statuses,
+  then fail over down the configured provider chain
 
 Preferred local run path:
 
@@ -517,8 +487,8 @@ Relevant test files:
 - [test_policy_engine.py](/private/var/www/bot-manager/tests/test_policy_engine.py)
 - [test_state_workflows.py](/private/var/www/bot-manager/tests/test_state_workflows.py)
 - [test_api_tutor.py](/private/var/www/bot-manager/tests/test_api_tutor.py)
-- [test_openclaw_client.py](/private/var/www/bot-manager/tests/test_openclaw_client.py)
-- [test_openclaw_live.py](/private/var/www/bot-manager/tests/live/test_openclaw_live.py)
+- [test_llm_service.py](/private/var/www/bot-manager/tests/test_llm_service.py)
+- [test_llm_live.py](/private/var/www/bot-manager/tests/live/test_llm_live.py)
 
 ## 14. Known architectural gaps
 

@@ -2,7 +2,7 @@
 Obsidian vault reader.
 
 Reads markdown files from the knowledge mirror (data/knowledge/).
-Used by openclaw to load context chunks for AI responses.
+Used by the bridge to load context chunks for AI responses.
 """
 
 from __future__ import annotations

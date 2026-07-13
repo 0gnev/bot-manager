@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "botmgr"
+version = "2.0.0"
+description = "Terminal manager for Bot Manager — install, configure and run the Telegram tutor bot"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "rich>=13.7",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+botmgr = "botmgr.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "app" }
+packages = ["botmgr"]

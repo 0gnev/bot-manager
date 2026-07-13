@@ -15,7 +15,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bridge.audit import audit_log
 from bridge.bot import registry
-from bridge.clients.openclaw import OpenclawClient
+from bridge.llm import LLMService
 from bridge.config import Settings
 from bridge.delivery import send_student_message
 from bridge.knowledge_learning import schedule_capture
@@ -390,7 +390,7 @@ async def revise_pending_approval(
         contact_id=contact_id,
     )
     student_message = _last_student_message(history)
-    client = OpenclawClient(settings)
+    client = LLMService(settings)
     revision = await client.revise_approval_draft(
         student_message=student_message,
         current_draft=data["draft_content"],

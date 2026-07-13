@@ -1,6 +1,6 @@
 """
 Student message and image handlers.
-Routes to openclaw and dispatches the response.
+Routes to the configured LLM provider chain and dispatches the response.
 Behavior depends on the chat's operating mode.
 """
 
@@ -16,7 +16,7 @@ from bridge.approvals.handler import submit_for_approval
 from bridge.audit import audit_log
 from bridge.bot.filters import StudentBotFilter
 from bridge.bot import registry
-from bridge.clients.openclaw import OpenclawClient
+from bridge.llm import LLMService
 from bridge.config import Settings
 from bridge.delivery import send_student_message
 from bridge.escalation.handler import escalate, prepare_escalation_package
@@ -584,7 +584,7 @@ async def on_text(message: Message, role: str, settings: Settings) -> None:
         contact_id=contact_id,
     )
     knowledge = await knowledge_search(settings.knowledge_path, text, limit=3)
-    client = OpenclawClient(settings)
+    client = LLMService(settings)
 
     response = await client.chat(
         message=text,
@@ -840,7 +840,7 @@ async def on_photo(message: Message, role: str, settings: Settings) -> None:
         contact_id=contact_id,
     )
     knowledge = await knowledge_search(settings.knowledge_path, caption, limit=3) if caption else []
-    client = OpenclawClient(settings)
+    client = LLMService(settings)
 
     response = await client.image(
         image_path=local_path,

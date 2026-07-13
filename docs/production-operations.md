@@ -13,7 +13,7 @@ Server assumptions in the current setup:
 
 - repo path: `/opt/bot-manager`
 - deploy user: `deploy`
-- stack services: `postgres`, `openclaw`, `bridge`
+- stack services: `postgres`, `bridge`
 - health endpoint: `http://127.0.0.1:8081/health`
 
 ## 1. Normal deploy/update
@@ -41,12 +41,11 @@ Post-deploy checks:
 cd /opt/bot-manager
 docker compose --env-file .env ps
 docker compose --env-file .env logs --since=5m bridge
-docker compose --env-file .env logs --since=5m openclaw
 ```
 
 Expected:
 
-- `postgres`, `openclaw`, and `bridge` are `Up`
+- `postgres` and `bridge` are `Up`
 - `bridge` answers `GET /health`
 - logs show Telegram polling for both bots
 - no `409 Conflict` polling errors
@@ -169,7 +168,6 @@ tar -czf "${backup_dir}/runtime-data.tar.gz" \
   data/audit \
   data/knowledge \
   data/logs \
-  data/openclaw \
   data/uploads \
   data/state
 ```
@@ -246,7 +244,7 @@ curl -fsS http://127.0.0.1:8081/health
 After restore, verify:
 
 - Telegram bots start polling normally
-- OpenClaw uses the intended project config
+- the configured LLM provider answers (send a test student message)
 - `POST /webhook/planerka` is reachable again from Planerka
 - tutor `/status` shows the intended global mode
 

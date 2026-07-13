@@ -5,7 +5,7 @@ Source of truth: the compact architecture prompt provided for Bot Manager.
 ## Completed in this pass
 
 - [x] Prevent tutor API replies from resolving escalations before student delivery succeeds.
-- [x] Treat invalid/non-JSON OpenClaw output as escalation fallback instead of a normal answer.
+- [x] Treat invalid/non-JSON model output as escalation fallback instead of a normal answer.
 - [x] Make webhook and Telegram update idempotency atomic for in-flight duplicate deliveries.
 - [x] Normalize image-message history so uncaptioned images are still recorded and current image context is not duplicated.
 - [x] Add focused regression tests for tutor delivery failure, invalid model output, and in-flight idempotency behavior.
@@ -13,7 +13,7 @@ Source of truth: the compact architecture prompt provided for Bot Manager.
 - [x] Support contact-only escalations, approvals, and Obsidian exports without synthetic `None-*` identities.
 - [x] Add contact-scoped tutor control endpoints for mode and automation management.
 - [x] Make tutor replies to approval cards revise drafts by default, with explicit `/send` for immediate direct delivery.
-- [x] Add latency instrumentation around OpenClaw calls so slow approval / answer paths are visible in audit logs.
+- [x] Add latency instrumentation around LLM calls so slow approval / answer paths are visible in audit logs.
 - [x] Add tutor-approved knowledge suggestion flow so reusable answers can be promoted into static knowledge without auto-saving private one-off cases.
 
 ## Next priority tasks
@@ -25,7 +25,7 @@ Source of truth: the compact architecture prompt provided for Bot Manager.
 - [x] Enrich escalation packages with summary, relevant conversation history, and draft reply when available.
 - [x] Add tutor-facing dialogue review/list endpoints so conversations can be reviewed without reading raw state files.
 - [x] Tighten student-booking linking around exact Planerka Telegram username matching, safer contact merges, and guarded deeplink fallback.
-- [x] Add retry/backoff policy around outbound Telegram delivery and OpenClaw calls.
+- [x] Add retry/backoff policy around outbound Telegram delivery and LLM calls.
 - [x] Add an explicit emergency-stop/admin control surface beyond raw REST toggles.
 - [x] Run the automated test suite in the intended Python 3.12 environment and wire it into the normal dev workflow.
 - [x] Keep first-rollout PostgreSQL backup/import/rollback runbooks explicit for any older environment still carrying legacy `data/state/`.

@@ -26,7 +26,6 @@ docker compose --env-file .env up -d --build --force-recreate bridge
 - knowledge mirror: `data/knowledge/`
 - audit log: `data/audit/`
 - uploads: `data/uploads/`
-- OpenClaw runtime state: `data/openclaw/`
 - legacy JSON import/backups only: `data/state/`
 
 ## Useful commands

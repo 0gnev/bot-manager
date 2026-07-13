@@ -16,25 +16,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  openclaw:
-    image: alpine/openclaw
-    user: root
-    env_file:
-      - .env
-    volumes:
-      - ./config:/workspace/config:ro
-      - ./config/openclaw.json:/root/.openclaw/openclaw.json:ro
-      - ./data/openclaw:/workspace
-    ports:
-      - "127.0.0.1:18789:18789"
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:18789/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-    restart: unless-stopped
-
   bridge:
     build:
       context: .
@@ -44,16 +25,17 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      openclaw:
-        condition: service_healthy
-        required: false
+    # Lets the container reach local model servers (Ollama, LM Studio)
+    # running on the host, on Linux as well as macOS/Windows.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./app:/workspace/app:ro
       - ./scripts:/workspace/scripts:ro
       - ./config:/workspace/config:ro
       - ./data/state:/workspace/data/state
       - ./data/uploads:/workspace/data/uploads
-      - ./data/knowledge:/workspace/data/knowledge
+      - ${OBSIDIAN_VAULT_PATH:-./data/knowledge}:/workspace/data/knowledge
       - ./data/audit:/workspace/data/audit
       - ./data/logs:/workspace/data/logs
     ports:

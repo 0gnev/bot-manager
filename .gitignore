@@ -32,11 +32,7 @@ run/
 logs/
 knowledge/
 
-# ── service state / openclaw workspace ────────────────────────────────────────
-.openclaw/
-data/openclaw/**
-!data/openclaw/
-!data/openclaw/.gitkeep
+# ── service state ─────────────────────────────────────────────────────────────
 *.db
 *.sqlite
 *.sqlite3
@@ -67,7 +63,7 @@ pip-log.txt
 # ── docker ────────────────────────────────────────────────────────────────────
 .docker/
 
-# ── node (openclaw workspace) ─────────────────────────────────────────────────
+# ── node ──────────────────────────────────────────────────────────────────────
 node_modules/
 dist/
 build/
